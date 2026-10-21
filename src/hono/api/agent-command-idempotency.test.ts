@@ -2,6 +2,7 @@ import { agenticApiTokens } from "@/db/agentic-access";
 import { hashAgenticCredential } from "@/db/agentic-access/request";
 import { auditEvents, envelopeRecipients, envelopes } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 import {
 	agentSelfSignTables,
 	selfSignRows as rows,
@@ -37,7 +38,7 @@ describe("agent command idempotency", () => {
 	it("rejects a missing Idempotency-Key before every self-sign mutation", async () => {
 		const mutations = [
 			["POST", "/api/v1/documents", "application/json", JSON.stringify({ name: "Ada" })],
-			["PUT", `/api/v1/documents/${documentId}/source-pdf`, "application/pdf", "%PDF-1.7\n%%EOF"],
+			["PUT", `/api/v1/documents/${documentId}/source-pdf`, "application/pdf", pdfFixtureText()],
 			[
 				"POST",
 				`/api/v1/documents/${documentId}/signature-profiles`,

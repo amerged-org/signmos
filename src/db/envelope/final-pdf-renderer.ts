@@ -1,7 +1,18 @@
 import { PDFDocument, type PDFFont, type PDFPage, rgb, StandardFonts } from "pdf-lib";
+import { assertPdfFieldCount, loadValidatedSourcePdf } from "./pdf-policy";
 import type { SourceDocument } from "./schema";
 
-export const FINAL_PDF_RENDERER_PRODUCER = "signmos-final-pdf-renderer/3";
+export const FINAL_PDF_RENDERER_PRODUCER = "amerged-sign-final-pdf-renderer/4";
+
+export class FinalPdfRenderError extends Error {
+	constructor(
+		public readonly code: "INVALID_SOURCE_PDF" | "FIELD_PAGE_MISSING",
+		message: string,
+	) {
+		super(message);
+		this.name = "FinalPdfRenderError";
+	}
+}
 
 export type FinalPdfRows = {
 	fields: Array<Record<string, unknown>>;
@@ -16,17 +27,19 @@ export async function renderFinalPdf(input: {
 	certificateHash: string;
 	sourceBytes: Uint8Array;
 }): Promise<Uint8Array> {
-	const pdf = await loadSourcePdf(input.sourceBytes);
+	const rows = canonicalRows(input.rows);
+	assertPdfFieldCount(rows.fields.length);
+	const pdf = await loadValidatedSourcePdf(input.sourceBytes);
 	pdf.setProducer(FINAL_PDF_RENDERER_PRODUCER);
 	const font = await pdf.embedFont(StandardFonts.Helvetica);
 	const boldFont = await pdf.embedFont(StandardFonts.HelveticaBold);
 	const signatureFont = await pdf.embedFont(StandardFonts.HelveticaOblique);
-	drawFieldValues(pdf, input.rows, font, boldFont, signatureFont);
+	drawFieldValues(pdf, rows, font, boldFont, signatureFont);
 	drawAuditCertificate(
 		pdf,
 		input.envelopeId,
 		input.sourceDocument,
-		input.rows,
+		rows,
 		input.certificateHash,
 		font,
 		boldFont,
@@ -36,7 +49,7 @@ export async function renderFinalPdf(input: {
 
 export async function isCurrentFinalPdfArtifact(bytes: Uint8Array): Promise<boolean> {
 	try {
-		const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+		const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
 		return pdf.getProducer() === FINAL_PDF_RENDERER_PRODUCER;
 	} catch {
 		return false;
@@ -47,25 +60,28 @@ export function buildCertificateMaterial(
 	sourceDocument: SourceDocument,
 	rows: FinalPdfRows,
 ): string {
+	const stableRows = canonicalRows(rows);
 	return [
 		`source:${sourceDocument.sha256}`,
 		"fields:",
-		...buildFlattenedFieldLines(rows),
+		...buildFlattenedFieldLines(stableRows),
 		"events:",
-		...buildEventSummaryLines(rows.events),
+		...buildEventSummaryLines(stableRows.events),
 	].join("\n");
 }
 
-async function loadSourcePdf(sourceBytes: Uint8Array): Promise<PDFDocument> {
-	try {
-		const pdf = await PDFDocument.load(sourceBytes, { ignoreEncryption: true });
-		pdf.getPageCount();
-		return pdf;
-	} catch {
-		const pdf = await PDFDocument.create();
-		pdf.addPage([612, 792]);
-		return pdf;
-	}
+function canonicalRows(rows: FinalPdfRows): FinalPdfRows {
+	const ordered = (input: Array<Record<string, unknown>>, keys: string[]) =>
+		[...input].sort((left, right) => {
+			const leftKey = keys.map((key) => stringValue(left, key)).join("\u0000");
+			const rightKey = keys.map((key) => stringValue(right, key)).join("\u0000");
+			return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+		});
+	return {
+		fields: ordered(rows.fields, ["id", "page", "type", "x", "y"]),
+		values: ordered(rows.values, ["fieldId", "id", "value"]),
+		events: ordered(rows.events, ["createdAt", "id", "eventType", "message"]),
+	};
 }
 
 function drawFieldValues(
@@ -81,7 +97,7 @@ function drawFieldValues(
 	for (const field of rows.fields) {
 		const value = valueByField.get(stringValue(field, "id"))?.trim();
 		if (!value) continue;
-		const page = getOrAddPage(pdf, numberValue(field, "page", 1));
+		const page = getSourcePage(pdf, numberValue(field, "page", 1));
 		const box = fieldBoxOnPage(field, page);
 		if (stringValue(field, "type") === "signature") {
 			drawSignatureStamp(page, value, box, boldFont, signatureFont);
@@ -162,7 +178,7 @@ function drawSignatureStamp(
 		color: accent,
 	});
 
-	const caption = "by auditmos.com";
+	const caption = "sign.amerged.com";
 	const captionSize = 5.5;
 	const captionWidth = boldFont.widthOfTextAtSize(caption, captionSize);
 	page.drawText(caption, {
@@ -285,10 +301,14 @@ function signaturePathBounds(
 	};
 }
 
-function getOrAddPage(pdf: PDFDocument, pageNumber: number): PDFPage {
-	const pageIndex = Math.max(0, pageNumber - 1);
-	while (pdf.getPageCount() <= pageIndex) pdf.addPage([612, 792]);
-	return pdf.getPage(pageIndex);
+function getSourcePage(pdf: PDFDocument, pageNumber: number): PDFPage {
+	if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pdf.getPageCount()) {
+		throw new FinalPdfRenderError(
+			"FIELD_PAGE_MISSING",
+			"A signing field refers to a page missing from the source PDF.",
+		);
+	}
+	return pdf.getPage(pageNumber - 1);
 }
 
 function fieldBoxOnPage(

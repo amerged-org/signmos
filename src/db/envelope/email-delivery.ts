@@ -1,4 +1,6 @@
-export interface EmailDeliveryEnv {
+import { hasOmhMail, type OmhMailEnv, sendOmhMail } from "@/omh/mail";
+
+export interface EmailDeliveryEnv extends OmhMailEnv {
 	APP_BASE_URL?: string;
 	CLOUDFLARE_ENV?: string;
 	EMAIL_DELIVERY_TEST_BYPASS?: string;
@@ -77,13 +79,14 @@ export class EmailDeliveryError extends Error {
 }
 
 export function isResendConfigured(env: EmailDeliveryEnv | undefined): boolean {
-	return getResendConfig(env) !== null;
+	return hasOmhMail(env) || getResendConfig(env) !== null;
 }
 
 export async function deliverTransactionalEmail(
 	email: TransactionalEmail,
 	options: EmailDeliveryOptions,
 ): Promise<{ providerMessage: string | null }> {
+	if (options.env?.OHMYHOST_PROJECT_ID) return sendOmhMail(options.env, email);
 	const config = getResendConfig(options.env);
 	if (!config) return { providerMessage: null };
 
@@ -118,46 +121,46 @@ export async function deliverTransactionalEmail(
 export function buildPartnerVerificationEmail(
 	input: PartnerVerificationEmailInput,
 ): TransactionalEmail {
-	const name = input.recipientName.trim() || "there";
+	const name = input.recipientName.trim() || "zusammen";
 	return {
 		to: input.email,
-		subject: "Verify your email to sign this document",
-		text: `Hi ${name},\n\nVerify your email to review and sign this document:\n${input.verificationUrl}\n\nThis link expires in 7 days.`,
-		html: `<p>Hi ${escapeHtml(name)},</p><p>Verify your email to review and sign this document.</p><p><a href="${escapeHtml(input.verificationUrl)}">Open signing link</a></p><p>This link expires in 7 days.</p>`,
+		subject: "Deine Unterschrift wird benötigt · amerged Sign",
+		text: `Hallo ${name},\n\nein Vertrag wartet auf deine Unterschrift. Über den persönlichen Link bestätigst du deine E-Mail-Adresse und kannst den Vertrag prüfen und unterschreiben:\n${input.verificationUrl}\n\nDer Link ist 7 Tage gültig.\n\namerged Sign`,
+		html: `<p>Hallo ${escapeHtml(name)},</p><p>Ein Vertrag wartet auf deine Unterschrift. Über den persönlichen Link bestätigst du deine E-Mail-Adresse und kannst den Vertrag prüfen und unterschreiben.</p><p><a href="${escapeHtml(input.verificationUrl)}">Vertrag prüfen und unterschreiben</a></p><p>Der Link ist 7 Tage gültig.</p><p>amerged Sign</p>`,
 	};
 }
 
 export function buildSenderVerificationEmail(
 	input: SenderVerificationEmailInput,
 ): TransactionalEmail {
-	const name = input.senderName.trim() || "there";
+	const name = input.senderName.trim() || "zusammen";
 	return {
 		to: input.email,
-		subject: "Verify your email to start signing",
-		text: `Hi ${name},\n\nVerify your email to continue preparing your Signmos document:\n${input.verificationUrl}\n\nThis link expires in 30 minutes.`,
-		html: `<p>Hi ${escapeHtml(name)},</p><p>Verify your email to continue preparing your Signmos document.</p><p><a href="${escapeHtml(input.verificationUrl)}">Verify sender email</a></p><p>This link expires in 30 minutes.</p>`,
+		subject: "E-Mail-Adresse bestätigen · amerged Sign",
+		text: `Hallo ${name},\n\nbestätige deine E-Mail-Adresse, um deinen Vertrag bei amerged Sign vorzubereiten:\n${input.verificationUrl}\n\nDer Link ist 30 Minuten gültig.\n\namerged Sign`,
+		html: `<p>Hallo ${escapeHtml(name)},</p><p>Bestätige deine E-Mail-Adresse, um deinen Vertrag bei amerged Sign vorzubereiten.</p><p><a href="${escapeHtml(input.verificationUrl)}">E-Mail-Adresse bestätigen</a></p><p>Der Link ist 30 Minuten gültig.</p><p>amerged Sign</p>`,
 	};
 }
 
 export function buildSenderSigningEmail(input: SenderSigningEmailInput): TransactionalEmail {
-	const name = input.senderName.trim() || "there";
+	const name = input.senderName.trim() || "zusammen";
 	return {
 		to: input.email,
-		subject: "Sign your document",
-		text: `Hi ${name},\n\nYour document is ready for your signature:\n${input.signingUrl}\n\nThis link expires in 7 days.`,
-		html: `<p>Hi ${escapeHtml(name)},</p><p>Your document is ready for your signature.</p><p><a href="${escapeHtml(input.signingUrl)}">Open signing page</a></p><p>This link expires in 7 days.</p>`,
+		subject: "Dein Vertrag ist bereit zur Unterschrift · amerged Sign",
+		text: `Hallo ${name},\n\ndein Vertrag ist bereit für deine Unterschrift:\n${input.signingUrl}\n\nDer Link ist 7 Tage gültig.\n\namerged Sign`,
+		html: `<p>Hallo ${escapeHtml(name)},</p><p>Dein Vertrag ist bereit für deine Unterschrift.</p><p><a href="${escapeHtml(input.signingUrl)}">Vertrag unterschreiben</a></p><p>Der Link ist 7 Tage gültig.</p><p>amerged Sign</p>`,
 	};
 }
 
 export function buildSenderPartnerSignedEmail(
 	input: SenderPartnerSignedEmailInput,
 ): TransactionalEmail {
-	const signerName = input.signerName.trim() || "A signer";
+	const signerName = input.signerName.trim() || "Ein Empfänger";
 	return {
 		to: input.email,
-		subject: "Your document was signed",
-		text: `${signerName} signed your document.\n\nView document status:\n${input.statusUrl}`,
-		html: `<p>${escapeHtml(signerName)} signed your document.</p><p><a href="${escapeHtml(input.statusUrl)}">View document status</a></p>`,
+		subject: "Dein Vertrag wurde unterzeichnet · amerged Sign",
+		text: `${signerName} hat deinen Vertrag unterzeichnet.\n\nVertragsstatus ansehen:\n${input.statusUrl}\n\namerged Sign`,
+		html: `<p>${escapeHtml(signerName)} hat deinen Vertrag unterzeichnet.</p><p><a href="${escapeHtml(input.statusUrl)}">Vertragsstatus ansehen</a></p><p>amerged Sign</p>`,
 	};
 }
 
@@ -166,20 +169,20 @@ export function buildSenderChangeRequestEmail(
 ): TransactionalEmail {
 	return {
 		to: input.email,
-		subject: "Changes requested on your document",
-		text: `A signer requested changes before completing your document.\n\nComment:\n${input.comment}\n\nUpload a revised PDF here:\n${input.revisionUrl}`,
-		html: `<p>A signer requested changes before completing your document.</p><p><strong>Comment:</strong></p><p>${escapeHtml(input.comment)}</p><p><a href="${escapeHtml(input.revisionUrl)}">Upload revised PDF</a></p>`,
+		subject: "Änderungen an deinem Vertrag angefragt · amerged Sign",
+		text: `Ein Empfänger hat vor der Unterschrift um Änderungen gebeten.\n\nKommentar:\n${input.comment}\n\nÜberarbeitete PDF hochladen:\n${input.revisionUrl}\n\namerged Sign`,
+		html: `<p>Ein Empfänger hat vor der Unterschrift um Änderungen gebeten.</p><p><strong>Kommentar:</strong></p><p>${escapeHtml(input.comment)}</p><p><a href="${escapeHtml(input.revisionUrl)}">Überarbeitete PDF hochladen</a></p><p>amerged Sign</p>`,
 	};
 }
 
 export function buildHumanReviewEmail(input: HumanReviewEmailInput): TransactionalEmail {
-	const documentName = input.documentName.trim() || "Untitled document";
-	const agentName = input.agentName.trim() || "An agent";
+	const documentName = input.documentName.trim() || "Unbenannter Vertrag";
+	const agentName = input.agentName.trim() || "Eine Anwendung";
 	return {
 		to: input.email,
-		subject: `Review requested: ${documentName}`,
-		text: `${agentName} requested: ${input.actionLabel}\n\nDocument: ${documentName}\nConsequence: ${input.consequence}\nExpires: ${input.expiresAt}\n\nReview in Signmos:\n${input.reviewUrl}`,
-		html: `<p>${escapeHtml(agentName)} requested <strong>${escapeHtml(input.actionLabel)}</strong>.</p><p><strong>Document:</strong> ${escapeHtml(documentName)}</p><p><strong>Consequence:</strong> ${escapeHtml(input.consequence)}</p><p><strong>Expires:</strong> ${escapeHtml(input.expiresAt)}</p><p><a href="${escapeHtml(input.reviewUrl)}">Review in Signmos</a></p>`,
+		subject: `Freigabe angefragt: ${documentName} · amerged Sign`,
+		text: `${agentName} fragt an: ${input.actionLabel}\n\nVertrag: ${documentName}\nAuswirkung: ${input.consequence}\nGültig bis: ${input.expiresAt}\n\nIn amerged Sign prüfen:\n${input.reviewUrl}`,
+		html: `<p>${escapeHtml(agentName)} fragt an: <strong>${escapeHtml(input.actionLabel)}</strong>.</p><p><strong>Vertrag:</strong> ${escapeHtml(documentName)}</p><p><strong>Auswirkung:</strong> ${escapeHtml(input.consequence)}</p><p><strong>Gültig bis:</strong> ${escapeHtml(input.expiresAt)}</p><p><a href="${escapeHtml(input.reviewUrl)}">In amerged Sign prüfen</a></p>`,
 	};
 }
 

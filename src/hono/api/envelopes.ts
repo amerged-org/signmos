@@ -45,6 +45,7 @@ import {
 	type VerifiedSenderSession,
 	verifySenderToken,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_BYTES, PdfPolicyError } from "@/db/envelope/pdf-policy";
 import {
 	authorizeHistoryCreator,
 	type HistoryCreatorAccess,
@@ -65,7 +66,7 @@ import {
 import { historyError } from "./history-errors";
 
 const envelopesEndpoint = createHono();
-const maxSourcePdfBytes = 10 * 1024 * 1024;
+const maxSourcePdfBytes = MAX_SOURCE_PDF_BYTES;
 
 envelopesEndpoint.use("/:id/*", async (c, next) => {
 	if (!isHistoryCreatorRequest(c)) return next();
@@ -588,7 +589,7 @@ envelopesEndpoint.post("/:id/source-pdf", async (c) => {
 			{
 				error: {
 					code: "SOURCE_PDF_TOO_LARGE",
-					message: "Source PDF must be under 10 MB",
+					message: "Source PDF must be at most 2 MiB",
 					limitBytes: maxSourcePdfBytes,
 				},
 			},
@@ -631,6 +632,8 @@ envelopesEndpoint.post("/:id/source-pdf", async (c) => {
 			result.reused ? 200 : 201,
 		);
 	} catch (error) {
+		if (error instanceof PdfPolicyError)
+			return c.json({ error: { code: error.code, message: error.message } }, error.status);
 		if (error instanceof SourcePdfUploadError) {
 			if (error.code === "DUPLICATE_SOURCE_PDF") {
 				await recordSourcePdfUploadRejection({
@@ -841,6 +844,8 @@ envelopesEndpoint.post("/:id/fields", async (c) => {
 	try {
 		fields = await addFields(c.req.param("id"), parsed.data);
 	} catch (error) {
+		if (error instanceof PdfPolicyError)
+			return c.json({ error: { code: error.code, message: error.message } }, error.status);
 		const message = error instanceof Error ? error.message : "Unable to create fields";
 		if (message === "Envelope must be draft") {
 			return c.json(

@@ -207,13 +207,15 @@ async function executeSigningApproval(
 		principal: approval.principal,
 		documentId: approval.documentId,
 		request: payload.data,
-		recordId: approval.commandId,
 		now: requestNow(c),
 		requestIp: requestIp(c),
 		documentsBucket: documentsBucket(c),
 		emailDelivery: humanReviewEmailDelivery(c),
 	});
-	if (!execution.ok) return invalidateReadyApproval(c, approval, "DOCUMENT_LIFECYCLE_CHANGED");
+	if (!execution.ok)
+		return execution.status >= 500
+			? failReadyApproval(c, session, approval)
+			: invalidateReadyApproval(c, approval, "DOCUMENT_LIFECYCLE_CHANGED");
 	const executionBody = (await execution.json()) as { data?: unknown };
 	if (executionBody.data === undefined) {
 		return invalidateReadyApproval(c, approval, "EXECUTION_RESULT_INVALID");

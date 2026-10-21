@@ -1,5 +1,7 @@
 import { inflateSync } from "node:zlib";
+import { PDFDocument } from "pdf-lib";
 import { agenticApiTokens, agenticSecurityEvents } from "@/db/agentic-access/table";
+import { wrapSigningTestDb } from "@/db/envelope/signing-test-db";
 import {
 	auditEvents,
 	emailSendRecords,
@@ -50,6 +52,14 @@ export const agentSelfSignTables = [
 	auditEvents,
 	finalDocuments,
 ] as const;
+
+export async function contractPdfFixture(): Promise<ArrayBuffer> {
+	const pdf = await PDFDocument.create();
+	pdf.setCreationDate(new Date("2026-10-21T08:00:00Z"));
+	pdf.setModificationDate(new Date("2026-10-21T08:00:00Z"));
+	pdf.addPage([612, 792]).drawText("Contract fixture");
+	return Uint8Array.from(await pdf.save({ useObjectStreams: false })).buffer;
+}
 
 export function selfSignRows(table: unknown): AgentSelfSignStoredRow[] {
 	const tableRows = agentSelfSignTestState.rows.get(table) ?? [];
@@ -126,34 +136,38 @@ function nextId(sequence: number): string {
 	return `80000000-0000-4000-8000-${String(sequence).padStart(12, "0")}`;
 }
 
-export const getAgentSelfSignTestDb = () => ({
-	select: () => ({ from: (table: unknown) => selectQuery(table) }),
-	insert: (table: unknown) => ({
-		values: (value: AgentSelfSignStoredRow | AgentSelfSignStoredRow[]) => ({
-			returning: async () => insertedRows(table, Array.isArray(value) ? value : [value]),
-		}),
-	}),
-	update: (table: unknown) => ({
-		set: (values: AgentSelfSignStoredRow) => ({
-			where: (condition: unknown) => {
-				const updated = selfSignRows(table).filter((row) => matches(row, condition));
-				for (const row of updated) Object.assign(row, values);
-				return mutationQuery(updated);
-			},
-		}),
-	}),
-	delete: (table: unknown) => ({
-		where: (condition: unknown) => {
-			const target = selfSignRows(table);
-			const deleted = target.filter((row) => matches(row, condition));
-			agentSelfSignTestState.rows.set(
-				table,
-				target.filter((row) => !deleted.includes(row)),
-			);
-			return mutationQuery(deleted);
+export const getAgentSelfSignTestDb = () =>
+	wrapSigningTestDb(
+		{
+			select: () => ({ from: (table: unknown) => selectQuery(table) }),
+			insert: (table: unknown) => ({
+				values: (value: AgentSelfSignStoredRow | AgentSelfSignStoredRow[]) => ({
+					returning: async () => insertedRows(table, Array.isArray(value) ? value : [value]),
+				}),
+			}),
+			update: (table: unknown) => ({
+				set: (values: AgentSelfSignStoredRow) => ({
+					where: (condition: unknown) => {
+						const updated = selfSignRows(table).filter((row) => matches(row, condition));
+						for (const row of updated) Object.assign(row, values);
+						return mutationQuery(updated);
+					},
+				}),
+			}),
+			delete: (table: unknown) => ({
+				where: (condition: unknown) => {
+					const target = selfSignRows(table);
+					const deleted = target.filter((row) => matches(row, condition));
+					agentSelfSignTestState.rows.set(
+						table,
+						target.filter((row) => !deleted.includes(row)),
+					);
+					return mutationQuery(deleted);
+				},
+			}),
 		},
-	}),
-});
+		selfSignRows,
+	);
 
 export function agentSelfSignBucket(): R2Bucket {
 	return {
@@ -171,12 +185,14 @@ export function agentSelfSignBucket(): R2Bucket {
 			const bytes = agentSelfSignTestState.r2Objects.get(key);
 			return bytes ? ({ arrayBuffer: async () => bytes.buffer } as R2ObjectBody) : null;
 		},
-		delete: async (key: string) => {
-			agentSelfSignTestState.r2Objects.delete(key);
-			agentSelfSignTestState.r2DeleteCounts.set(
-				key,
-				(agentSelfSignTestState.r2DeleteCounts.get(key) ?? 0) + 1,
-			);
+		delete: async (keys: string | string[]) => {
+			for (const key of Array.isArray(keys) ? keys : [keys]) {
+				agentSelfSignTestState.r2Objects.delete(key);
+				agentSelfSignTestState.r2DeleteCounts.set(
+					key,
+					(agentSelfSignTestState.r2DeleteCounts.get(key) ?? 0) + 1,
+				);
+			}
 		},
 	} as R2Bucket;
 }

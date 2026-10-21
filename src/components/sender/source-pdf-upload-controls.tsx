@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MAX_SOURCE_PDF_BYTES, MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import { cn } from "@/lib/utils";
 import type { SourcePdfUploadPanelProps } from "./source-pdf-upload-panel";
 
@@ -103,6 +104,12 @@ export function UploadSourcePdfForm({
 			clearFileInput();
 			return;
 		}
+		if (nextFile.size > MAX_SOURCE_PDF_BYTES) {
+			setFile(null);
+			setUploadValidationError(`Select a PDF up to ${MAX_SOURCE_PDF_BYTES / 1024 / 1024} MB.`);
+			clearFileInput();
+			return;
+		}
 		setFile(nextFile);
 		setUploadValidationError(null);
 	}
@@ -166,7 +173,8 @@ export function UploadSourcePdfForm({
 							Click here or drag a PDF into this area.
 						</span>
 						<span className="mt-3 rounded-md bg-background px-2 py-1 text-muted-foreground text-xs">
-							PDF only, up to 10 MB
+							PDF only, up to {MAX_SOURCE_PDF_BYTES / 1024 / 1024} MB and {MAX_SOURCE_PDF_PAGES}{" "}
+							pages
 						</span>
 					</Label>
 					{file ? <SelectedPdf file={file} /> : null}

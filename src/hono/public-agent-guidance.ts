@@ -1,3 +1,8 @@
+import {
+	MAX_DOCUMENT_FIELDS,
+	MAX_SOURCE_PDF_BYTES,
+	MAX_SOURCE_PDF_PAGES,
+} from "@/db/envelope/pdf-policy-limits";
 import { agentCreatorControlGuidance } from "./public-agent-creator-control-contract";
 import { agentPartnerGuidance } from "./public-agent-partner-contract";
 import { agentRateLimitGuidance } from "./public-agent-rate-limit-contract";
@@ -53,7 +58,7 @@ POST /api/v1/documents with your signer name. The verified Bearer email owns the
 
 ## Upload one source PDF
 
-PUT /api/v1/documents/{documentId}/source-pdf with application/pdf bytes under 10 MB. Inspect metadata or download the authorized preparation copy from the documented source routes.
+PUT /api/v1/documents/{documentId}/source-pdf with application/pdf bytes at most ${MAX_SOURCE_PDF_BYTES} bytes (2 MiB), ${MAX_SOURCE_PDF_PAGES} pages, and ${MAX_DOCUMENT_FIELDS} signing fields per document. Inspect metadata or download the authorized preparation copy from the documented source routes. SOURCE_PDF_TOO_LARGE, SOURCE_PDF_TOO_MANY_PAGES, and SOURCE_PDF_TOO_MANY_FIELDS require a smaller PDF or fewer fields.
 
 ## Save a signature profile
 
@@ -61,7 +66,7 @@ POST a typed or drawn profile with rememberSignature true. Reusable signature co
 
 ## Place signature and date fields
 
-Use explicit coordinates or the default-fields command. One signature placeholder is permitted for the self-signer, and preparation commands are draft-only.
+Use explicit coordinates or the default-fields command. Page numbers must be between 1 and ${MAX_SOURCE_PDF_PAGES}; the document may have at most ${MAX_DOCUMENT_FIELDS} signing fields. One signature placeholder is permitted for the self-signer, and preparation commands are draft-only.
 
 ## Review and reposition
 
@@ -102,6 +107,10 @@ Poll document status and history for recipient states and allowedActions. Do not
 ## Delivery-provider failure
 
 EMAIL_DELIVERY_FAILED is retryable and leaves the document unsent. Retry the exact request with the same Idempotency-Key to recover the original result; use a fresh key only for a new intended attempt.
+
+## Final PDF generation failure
+
+FINAL_PDF_GENERATION_FAILED means the recorded signature is durable but the document is still sent while its final PDF is unavailable. Do not report completion. Retry the same recorded signature to resume final PDF creation; never replace it or request decline or changes after signing. If a prior human-review command has failed, create a new review with a fresh Idempotency-Key for this same signature and obtain approval again.
 ${agentPartnerGuidance}
 ${agentCreatorControlGuidance}
 ${agentRateLimitGuidance}

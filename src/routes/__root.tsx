@@ -34,8 +34,8 @@ export const Route = createRootRouteWithContext<{
 				content: "#14161f",
 			},
 			...seo({
-				title: "Signmos | No-Account PDF Signatures",
-				description: "Start a no-account PDF signature envelope and verify by email.",
+				title: "amerged Sign | Verträge digital unterschreiben",
+				description: "Verträge sicher versenden, unterschreiben und verwalten.",
 				image: "/signmos-og.png",
 			}),
 		],
@@ -90,14 +90,14 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en">
+		<html lang="de">
 			<head>
 				<HeadContent />
 			</head>
 			<body>
 				{children}
-				<TanStackRouterDevtools position="bottom-right" />
-				<ReactQueryDevtools buttonPosition="bottom-left" />
+				{import.meta.env.DEV && <TanStackRouterDevtools position="bottom-right" />}
+				{import.meta.env.DEV && <ReactQueryDevtools buttonPosition="bottom-left" />}
 				<Scripts />
 			</body>
 		</html>

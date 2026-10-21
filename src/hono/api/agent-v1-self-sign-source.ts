@@ -25,13 +25,14 @@ import {
 	SourcePdfUploadError,
 	uploadSourcePdfDocument,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_BYTES, PdfPolicyError } from "@/db/envelope/pdf-policy";
 import { createAgentHono } from "@/hono/factory";
 import { agentPartnerAuthorizationError } from "./agent-partner-errors";
 import { getRequestIp, isPdf, parseSourceFilename, sha256Hex } from "./envelope-route-helpers";
 
 const agentSelfSignSourceEndpoint = createAgentHono();
 const DocumentIdSchema = z.string().uuid();
-const maxSourcePdfBytes = 10 * 1024 * 1024;
+const maxSourcePdfBytes = MAX_SOURCE_PDF_BYTES;
 
 agentSelfSignSourceEndpoint.post(agentSelfSignOperations.create.relativePath, async (c) => {
 	const parsed = AgentSelfSignCreateRequestSchema.safeParse(await c.req.json().catch(() => null));
@@ -119,7 +120,7 @@ agentSelfSignSourceEndpoint.put(agentSelfSignOperations.sourceUpload.relativePat
 		});
 		const body = agentError({
 			code: "SOURCE_PDF_TOO_LARGE",
-			message: "Source PDF must be under 10 MB",
+			message: "Source PDF must be at most 2 MiB",
 			retryable: false,
 			allowedActions: ["upload_source_pdf"],
 			recoveryUrl: `/api/v1/documents/${documentId}/source-pdf`,
@@ -158,6 +159,22 @@ agentSelfSignSourceEndpoint.put(agentSelfSignOperations.sourceUpload.relativePat
 		});
 		return c.json(body, 201);
 	} catch (error) {
+		if (error instanceof PdfPolicyError) {
+			const body = agentError({
+				code: error.code,
+				message: error.message,
+				retryable: false,
+				allowedActions: ["upload_source_pdf"],
+				recoveryUrl: `/api/v1/documents/${documentId}/source-pdf`,
+			});
+			await completeAgentCommand({
+				recordId: claim.recordId,
+				status: error.status,
+				body,
+				documentId,
+			});
+			return c.json(body, error.status);
+		}
 		if (!(error instanceof SourcePdfUploadError)) throw error;
 		const body = agentError({
 			code: error.code,

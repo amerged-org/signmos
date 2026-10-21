@@ -1,13 +1,14 @@
-import { Signature } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function WordmarkContent() {
 	return (
 		<>
-			<span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-				<Signature aria-hidden="true" className="size-4" />
+			<span className="font-serif text-2xl text-foreground tracking-tight">
+				amerged<span className="text-destructive">.</span>
 			</span>
-			<span className="font-semibold text-foreground text-sm">Signmos</span>
+			<span className="border-l pl-2 text-[11px] font-medium uppercase tracking-[0.24em]">
+				Sign
+			</span>
 		</>
 	);
 }
@@ -23,7 +24,7 @@ export function Wordmark({ linked = true, className }: { linked?: boolean; class
 	return (
 		<a
 			href="/"
-			aria-label="Signmos home"
+			aria-label="amerged Sign Startseite"
 			className={cn(
 				"inline-flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2",
 				className,

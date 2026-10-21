@@ -29,6 +29,7 @@ export type AgentPartnerSigningAuthorization =
 export async function authorizeAgentPartnerSigning(
 	principal: AgenticPrincipal,
 	documentId: string,
+	options: { allowCompletionRetry?: boolean } = {},
 ): Promise<AgentPartnerSigningAuthorization> {
 	const db = getDb();
 	const [envelopeRows, recipientRows, tokenRows] = await Promise.all([
@@ -57,11 +58,17 @@ export async function authorizeAgentPartnerSigning(
 		return { state: "declined" };
 	}
 	if (envelope.status === "changes_requested") return { state: "changes_requested" };
-	if (envelope.status === "completed" || recipient.status === "completed") {
+	const isFinalizationRetry = canRetryFinalization(
+		options.allowCompletionRetry,
+		envelope.status,
+		recipient.status,
+		recipientRows.filter((candidate) => candidate.envelopeId === documentId),
+	);
+	if (signingIsCompleted(envelope.status, recipient.status, isFinalizationRetry)) {
 		return { state: "completed" };
 	}
 	if (envelope.status !== "sent") return { state: "inactive", status: envelope.status };
-	if (recipient.status !== "pending" && recipient.status !== "sent") {
+	if (!["pending", "sent"].includes(recipient.status) && !isFinalizationRetry) {
 		return { state: "inactive", status: envelope.status };
 	}
 	const tokenRow = tokenRows
@@ -75,6 +82,30 @@ export async function authorizeAgentPartnerSigning(
 	return tokenRow
 		? { state: "active", token: SignerTokenSchema.parse(tokenRow) }
 		: { state: "inactive", status: envelope.status };
+}
+
+function signingIsCompleted(
+	envelopeStatus: string,
+	recipientStatus: string,
+	isFinalizationRetry: boolean,
+): boolean {
+	return (
+		envelopeStatus === "completed" || (recipientStatus === "completed" && !isFinalizationRetry)
+	);
+}
+
+function canRetryFinalization(
+	allowed: boolean | undefined,
+	envelopeStatus: string,
+	recipientStatus: string,
+	recipients: Array<typeof envelopeRecipients.$inferSelect>,
+): boolean {
+	return (
+		allowed === true &&
+		envelopeStatus === "sent" &&
+		recipientStatus === "completed" &&
+		recipients.every((recipient) => recipient.status === "completed")
+	);
 }
 
 export async function listAgentPartnerFields(token: SignerToken): Promise<EnvelopeField[]> {

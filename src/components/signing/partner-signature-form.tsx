@@ -51,19 +51,24 @@ type SignatureFormValues = {
 	rememberSignature: boolean;
 };
 
-const typedSignatureFonts: Array<{ label: string; value: TypedSignatureFont; stack: string }> = [
-	{
-		label: "Script",
-		value: "cursive",
-		stack: "'Savoye LET', 'Snell Roundhand', 'Segoe Script', cursive",
-	},
-	{ label: "Serif", value: "serif", stack: "'Iowan Old Style', Palatino, Georgia, serif" },
-	{
-		label: "Clean",
-		value: "sans-serif",
-		stack: "'InterVariable', 'Helvetica Neue', Arial, sans-serif",
-	},
-];
+const typedSignatureFonts: Array<{ label: string; value: TypedSignatureFont; className: string }> =
+	[
+		{
+			label: "Handschrift",
+			value: "cursive",
+			className: "font-['Savoye_LET','Snell_Roundhand','Segoe_Script',cursive]",
+		},
+		{
+			label: "Klassisch",
+			value: "serif",
+			className: "font-['Iowan_Old_Style',Palatino,Georgia,serif]",
+		},
+		{
+			label: "Klar",
+			value: "sans-serif",
+			className: "font-['InterVariable','Helvetica_Neue',Arial,sans-serif]",
+		},
+	];
 
 export function PartnerSignatureForm({
 	initialPreference,
@@ -127,18 +132,18 @@ export function PartnerSignatureForm({
 			<form.Subscribe selector={(state) => state.values}>
 				{(values) => {
 					const drawnPath = toSvgPath(drawPoints) || savedDrawnPath;
-					const fontStack =
-						typedSignatureFonts.find((font) => font.value === values.typedFont)?.stack ??
-						typedSignatureFonts[0].stack;
+					const fontClassName =
+						typedSignatureFonts.find((font) => font.value === values.typedFont)?.className ??
+						typedSignatureFonts[0].className;
 					return (
 						<>
 							<fieldset className="grid gap-3 sm:grid-cols-2">
-								<legend className="sr-only">Signature method</legend>
+								<legend className="sr-only">Art der Unterschrift</legend>
 								<SignatureMethodButton
 									isActive={values.mode === "typed"}
 									icon={<Type className="size-4" />}
-									title="Typed"
-									description="Render your name in a selected font."
+									title="Eintippen"
+									description="Dein Name wird als Unterschrift dargestellt."
 									onClick={() => {
 										form.setFieldValue("mode", "typed");
 										setValidationError(null);
@@ -147,8 +152,8 @@ export function PartnerSignatureForm({
 								<SignatureMethodButton
 									isActive={values.mode === "drawn"}
 									icon={<PenLine className="size-4" />}
-									title="Drawn"
-									description="Use a hand-drawn stroke for this signature."
+									title="Zeichnen"
+									description="Mit Maus oder Touchpad unterschreiben."
 									onClick={() => {
 										form.setFieldValue("mode", "drawn");
 										setValidationError(null);
@@ -159,18 +164,22 @@ export function PartnerSignatureForm({
 							{values.mode === "typed" ? (
 								<div className="grid gap-4 md:grid-cols-[1.5fr_1fr]">
 									<div
-										aria-label="Typed signature preview"
+										aria-label="Vorschau deiner Unterschrift"
 										role="img"
-										className="flex h-32 items-center justify-center rounded-lg border bg-background px-4 text-pretty text-3xl"
-										style={{ fontFamily: fontStack }}
+										className={cn(
+											"flex h-32 items-center justify-center rounded-lg border bg-background px-4 text-pretty text-3xl",
+											fontClassName,
+										)}
 									>
-										{values.typedText || "Typed name"}
+										{values.typedText || "Dein Name"}
 									</div>
 									<div className="grid gap-4">
 										<form.Field name="typedText">
 											{(field) => (
 												<div className="space-y-2">
-													<Label htmlFor="partner-typed-signature-text">Typed signature text</Label>
+													<Label htmlFor="partner-typed-signature-text">
+														Dein vollständiger Name
+													</Label>
 													<Input
 														id="partner-typed-signature-text"
 														value={field.state.value}
@@ -184,7 +193,7 @@ export function PartnerSignatureForm({
 										<form.Field name="typedFont">
 											{(field) => (
 												<div className="space-y-2">
-													<Label htmlFor="partner-signature-font">Signature font</Label>
+													<Label htmlFor="partner-signature-font">Schriftstil</Label>
 													<NativeSelect
 														id="partner-signature-font"
 														value={field.state.value}
@@ -207,7 +216,7 @@ export function PartnerSignatureForm({
 							) : (
 								<div className="space-y-3">
 									<svg
-										aria-label="Draw signature pad"
+										aria-label="Unterschrift zeichnen"
 										role="img"
 										viewBox="0 0 320 128"
 										className="h-32 w-full touch-none rounded-lg border bg-background"
@@ -228,7 +237,7 @@ export function PartnerSignatureForm({
 									</svg>
 									<Button type="button" variant="outline" onClick={clearDrawing}>
 										<RotateCcw className="size-4" />
-										Clear drawing
+										Zeichnung löschen
 									</Button>
 								</div>
 							)}
@@ -244,13 +253,13 @@ export function PartnerSignatureForm({
 												onChange={(event) => field.handleChange(event.target.checked)}
 												className="size-4 rounded border-input"
 											/>
-											<span>Remember signature for future envelopes</span>
+											<span>Unterschrift für weitere Verträge merken</span>
 										</label>
 									)}
 								</form.Field>
 								<Button type="submit" disabled={disabled}>
 									<Check className="size-4" />
-									Complete signing
+									Jetzt unterschreiben
 								</Button>
 							</div>
 						</>
@@ -280,7 +289,7 @@ function SignatureMethodButton({
 		<button
 			type="button"
 			aria-pressed={isActive}
-			aria-label={`Choose ${title.toLowerCase()} signature`}
+			aria-label={`${title} wählen`}
 			onClick={onClick}
 			className={cn(
 				"flex min-h-24 items-start gap-3 rounded-lg border bg-background p-4 text-left transition-colors",
@@ -328,7 +337,7 @@ function buildCompleteSigningPayload(
 ): { ok: true; value: CompleteSigningPayload } | { ok: false; message: string } {
 	if (values.mode === "typed") {
 		const typedText = values.typedText.trim();
-		if (!typedText) return { ok: false, message: "Type a signature before completing." };
+		if (!typedText) return { ok: false, message: "Bitte gib deinen Namen ein." };
 		return {
 			ok: true,
 			value: {
@@ -341,7 +350,7 @@ function buildCompleteSigningPayload(
 			},
 		};
 	}
-	if (!drawnPath) return { ok: false, message: "Draw a signature before completing." };
+	if (!drawnPath) return { ok: false, message: "Bitte zeichne deine Unterschrift." };
 	return {
 		ok: true,
 		value: {

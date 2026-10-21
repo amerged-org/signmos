@@ -1,6 +1,7 @@
 import agentV1Endpoint from "@/hono/api/agent-v1";
 import agenticEndpoint from "@/hono/api/agentic";
 import clientsEndpoint from "@/hono/api/clients";
+import contractsEndpoint from "@/hono/api/contracts";
 import envelopePreparationEndpoint from "@/hono/api/envelope-preparation";
 import envelopesEndpoint from "@/hono/api/envelopes";
 import finalDocumentsEndpoint from "@/hono/api/final-documents";
@@ -12,9 +13,12 @@ import historyHumanReviewEndpoint from "@/hono/api/history-human-review";
 import historySigningEndpoint from "@/hono/api/history-signing";
 import modeNavigationEndpoint from "@/hono/api/mode-navigation";
 import signingEndpoint from "@/hono/api/signing";
+import authEndpoint from "@/omh/auth-routes";
 import { createHono } from "./factory";
 
 export const apiHono = createHono().basePath("/api");
+apiHono.route("/auth", authEndpoint);
+apiHono.route("/contracts", contractsEndpoint);
 
 apiHono.route("/health", healthEndpoint);
 apiHono.route("/agentic", agenticEndpoint);

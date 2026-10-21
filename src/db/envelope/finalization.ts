@@ -1,5 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, type SQL, sql } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import { envelopeArtifactVersions } from "./artifact-versions";
 import { buildCertificateMaterial, renderFinalPdf } from "./final-pdf-renderer";
 import {
 	type Envelope,
@@ -15,14 +16,19 @@ import {
 	SourceDocumentSchema,
 } from "./schema";
 import {
+	decodeSigningRow,
+	noEnvelopeDeletion,
+	type SigningBatchQuery,
+	signingBatch,
+	signingStatement,
+} from "./signing-batch";
+import {
 	auditEvents,
-	emailSendRecords,
 	envelopeFields,
 	envelopeRecipients,
 	envelopes,
 	fieldValues,
 	finalDocuments,
-	senderVerificationEmailRecords,
 	senderVerificationTokens,
 	signerTokens,
 	sourceDocuments,
@@ -30,6 +36,9 @@ import {
 
 interface FinalizeEnvelopeOptions {
 	documentsBucket?: R2Bucket;
+	access?: SQL;
+	snapshot?: SigningFinalizationSnapshot;
+	completion?: { token: SignerToken; now: Date; owner?: string; recipientEmail?: string };
 }
 
 interface FinalDocumentArtifact {
@@ -61,26 +70,225 @@ export async function finalizeCompletedEnvelope(
 ) {
 	if (!options.documentsBucket) return null;
 
-	const db = getDb();
-	const artifact = await renderFinalDocumentArtifact(envelopeId, options.documentsBucket);
-	const r2Key = `envelopes/${envelopeId}/final.pdf`;
+	const snapshot = options.snapshot ?? (await getSigningFinalizationSnapshot(envelopeId));
+	if (snapshot.existing) {
+		if (!options.completion) return snapshot.existing;
+		return commitFinalArtifact(
+			envelopeId,
+			snapshot.existing.r2Key,
+			{ bytes: new Uint8Array(), ...snapshot.existing },
+			snapshot,
+			options.completion,
+		);
+	}
+	const artifact = await renderFinalDocumentArtifact(envelopeId, options.documentsBucket, snapshot);
+	const r2Key = `envelopes/${envelopeId}/final/${artifact.sha256}.pdf`;
+	await registerFinalArtifact(envelopeId, r2Key, snapshot, options.completion);
 	await options.documentsBucket.put(r2Key, artifact.bytes, {
 		httpMetadata: { contentType: artifact.contentType },
 	});
+	return commitFinalArtifact(envelopeId, r2Key, artifact, snapshot, options.completion);
+}
 
-	const [document] = await db
-		.insert(finalDocuments)
-		.values({
-			envelopeId,
-			r2Key,
-			sha256: artifact.sha256,
-			byteSize: artifact.byteSize,
-			contentType: artifact.contentType,
-		})
-		.returning();
-	const finalDocument = document ? FinalDocumentSchema.parse(document) : null;
-	await recordCompletionNotifications(envelopeId, finalDocument?.id);
-	return finalDocument;
+export interface SigningFinalizationSnapshot {
+	existing: FinalDocument | null;
+	sourceDocument: SourceDocument | null;
+	rows: {
+		fields: Array<Record<string, unknown>>;
+		values: Array<Record<string, unknown>>;
+		events: Array<Record<string, unknown>>;
+	};
+	recipients: ReturnType<typeof RecipientSchema.parse>[];
+	tokens: SignerToken[];
+	senderTokens: ReturnType<typeof SenderVerificationTokenSchema.parse>[];
+}
+
+export async function getSigningFinalizationSnapshot(
+	envelopeId: string,
+	writes: SigningBatchQuery[] = [],
+): Promise<SigningFinalizationSnapshot> {
+	const db = getDb();
+	const tables = [
+		finalDocuments,
+		sourceDocuments,
+		envelopeFields,
+		fieldValues,
+		auditEvents,
+		envelopeRecipients,
+		signerTokens,
+		senderVerificationTokens,
+	] as const;
+	const results = await signingBatch([
+		...writes,
+		...tables.map((table) => ({
+			table,
+			query: db.select().from(table).where(eq(table.envelopeId, envelopeId)).limit(100),
+		})),
+	]);
+	const [
+		finalRows = [],
+		sources = [],
+		fields = [],
+		values = [],
+		events = [],
+		recipients = [],
+		tokens = [],
+		senderTokens = [],
+	] = results.slice(writes.length);
+	return {
+		existing: finalRows[0] ? FinalDocumentSchema.parse(finalRows[0]) : null,
+		sourceDocument: latestSourceDocument(sources.map((row) => SourceDocumentSchema.parse(row))),
+		rows: { fields, values, events },
+		recipients: recipients.map((row) => RecipientSchema.parse(row)),
+		tokens: tokens.map((row) => SignerTokenSchema.parse(row)),
+		senderTokens: senderTokens.map((row) => SenderVerificationTokenSchema.parse(row)),
+	};
+}
+
+export function finalizationSnapshotProjection(
+	envelopeId: ReturnType<typeof sql>,
+): ReturnType<typeof sql<Record<string, unknown>>> {
+	return sql<Record<string, unknown>>`jsonb_build_object(
+		'sources', coalesce((select jsonb_agg(to_jsonb(s)) from (select * from source_documents where envelope_id = ${envelopeId} limit 100) s), '[]'::jsonb),
+		'fields', coalesce((select jsonb_agg(to_jsonb(f)) from (select * from envelope_fields where envelope_id = ${envelopeId} limit 100) f), '[]'::jsonb),
+		'values', coalesce((select jsonb_agg(to_jsonb(v)) from (select * from field_values where envelope_id = ${envelopeId} limit 100) v), '[]'::jsonb),
+		'events', coalesce((select jsonb_agg(to_jsonb(a)) from (select * from audit_events where envelope_id = ${envelopeId} limit 100) a), '[]'::jsonb),
+		'recipients', coalesce((select jsonb_agg(to_jsonb(r)) from (select * from envelope_recipients where envelope_id = ${envelopeId} limit 100) r), '[]'::jsonb),
+		'tokens', coalesce((select jsonb_agg(to_jsonb(t)) from (select * from signer_tokens where envelope_id = ${envelopeId} limit 100) t), '[]'::jsonb),
+		'senderTokens', coalesce((select jsonb_agg(to_jsonb(t)) from (select * from sender_verification_tokens where envelope_id = ${envelopeId} limit 100) t), '[]'::jsonb))`;
+}
+
+export function parseFinalizationSnapshotProjection(
+	data: Record<string, unknown>,
+): SigningFinalizationSnapshot {
+	const rows = (key: string, table: Parameters<typeof decodeSigningRow>[0]) => {
+		const raw = data[key];
+		if (!Array.isArray(raw)) throw new Error("Incomplete final document snapshot");
+		return raw.map((row: Record<string, unknown>) => decodeSigningRow(table, row));
+	};
+	return {
+		existing: null,
+		sourceDocument: latestSourceDocument(
+			rows("sources", sourceDocuments).map((row) => SourceDocumentSchema.parse(row)),
+		),
+		rows: {
+			fields: rows("fields", envelopeFields),
+			values: rows("values", fieldValues),
+			events: rows("events", auditEvents),
+		},
+		recipients: rows("recipients", envelopeRecipients).map((row) => RecipientSchema.parse(row)),
+		tokens: rows("tokens", signerTokens).map((row) => SignerTokenSchema.parse(row)),
+		senderTokens: rows("senderTokens", senderVerificationTokens).map((row) =>
+			SenderVerificationTokenSchema.parse(row),
+		),
+	};
+}
+
+function finalArtifactGuard(
+	envelopeId: string,
+	snapshot: SigningFinalizationSnapshot,
+	completion?: FinalizeEnvelopeOptions["completion"],
+	access?: SQL,
+) {
+	const source = snapshot.sourceDocument;
+	const token = completion?.token;
+	return sql`exists (select 1 from envelopes e where e.id = ${envelopeId}
+		and e.status in ('sent', 'completed') and ${noEnvelopeDeletion(envelopeId)} ${access ? sql`and (${access})` : sql``}
+		${completion?.owner ? sql`and e.created_by = ${completion.owner}` : sql``}
+		and exists (select 1 from source_documents s where s.envelope_id = e.id and s.id = ${source?.id ?? null} and s.sha256 = ${source?.sha256 ?? null}
+			and not exists (select 1 from source_documents newer where newer.envelope_id = e.id and newer.version > s.version))
+		${
+			token
+				? sql`and exists (select 1 from signer_tokens t where t.id = ${token.id} and t.envelope_id = e.id and t.recipient_id = ${token.recipientId} and t.token = ${token.token}
+			and t.status = 'active' and t.verified_at is not null and t.expires_at > ${completion.now})
+			and exists (select 1 from envelope_recipients current_recipient where current_recipient.id = ${token.recipientId} and current_recipient.envelope_id = e.id ${completion.recipientEmail ? sql`and current_recipient.email = ${completion.recipientEmail}` : sql``})
+			and not exists (select 1 from envelope_recipients r where r.envelope_id = e.id and r.status <> 'completed')`
+				: sql``
+		})`;
+}
+
+async function registerFinalArtifact(
+	envelopeId: string,
+	r2Key: string,
+	snapshot: SigningFinalizationSnapshot,
+	completion?: FinalizeEnvelopeOptions["completion"],
+	previousR2Key?: string,
+	access?: SQL,
+) {
+	const db = getDb();
+	const result =
+		(
+			await signingBatch([
+				signingStatement(sql`select id from envelopes where id = ${envelopeId} for update`),
+				...(previousR2Key
+					? [
+							db
+								.insert(envelopeArtifactVersions)
+								.values({ envelopeId, r2Key: previousR2Key })
+								.onConflictDoNothing(),
+						]
+					: []),
+				signingStatement(sql`/* signing-register-artifact */
+		with locked as (select id from envelopes where id = ${envelopeId} for update),
+		retained as (insert into envelope_artifact_versions (envelope_id, r2_key)
+			select locked.id, ${r2Key} from locked where ${finalArtifactGuard(envelopeId, snapshot, completion, access)}
+			on conflict (r2_key) do update set r2_key = excluded.r2_key returning id)
+		select id from retained`),
+			])
+		).at(-1) ?? [];
+	if (result.length !== 1) throw new Error("Document changed before final PDF retention");
+}
+
+async function commitFinalArtifact(
+	envelopeId: string,
+	r2Key: string,
+	artifact: FinalDocumentArtifact,
+	snapshot: SigningFinalizationSnapshot,
+	completion?: FinalizeEnvelopeOptions["completion"],
+) {
+	const documentId = crypto.randomUUID();
+	const guard = finalArtifactGuard(envelopeId, snapshot, completion);
+	const notificationWrites = snapshot.recipients.flatMap((recipient) => {
+		const token = latestSignerToken(snapshot.tokens, recipient.id);
+		return token
+			? [
+					signingStatement(sql`insert into email_send_records (envelope_id, recipient_id, token_id, email, kind, fallback_url)
+			select ${envelopeId}, ${recipient.id}, ${token.id}, ${recipient.email}, 'completion', ${`/completed-documents/${token.token}`}
+			from final_documents where id = ${documentId}`),
+				]
+			: [];
+	});
+	const senderToken = latestVerifiedSenderToken(snapshot.senderTokens);
+	if (senderToken)
+		notificationWrites.push(
+			signingStatement(sql`insert into sender_verification_email_records (envelope_id, token_id, email, kind, fallback_url)
+		select ${envelopeId}, ${senderToken.id}, ${senderToken.email}, 'completion', ${`/completed-documents/${documentId}`}
+		from final_documents where id = ${documentId}`),
+		);
+	const results = await signingBatch([
+		signingStatement(sql`select id from envelopes where id = ${envelopeId} for update`),
+		...(completion
+			? [
+					signingStatement(
+						sql`select id from signer_tokens where id = ${completion.token.id} for update`,
+					),
+				]
+			: []),
+		signingStatement(sql`/* signing-commit-artifact */ insert into final_documents (id, envelope_id, r2_key, sha256, byte_size, content_type)
+			select ${documentId}, ${envelopeId}, ${r2Key}, ${artifact.sha256}, ${artifact.byteSize}, ${artifact.contentType}
+			where ${guard} and not exists (select 1 from final_documents where envelope_id = ${envelopeId}) on conflict (r2_key) do nothing`),
+		...notificationWrites,
+		...(completion
+			? [
+					signingStatement(sql`update envelopes set status = 'completed' where id = ${envelopeId} and ${guard}
+			and exists (select 1 from final_documents f where f.envelope_id = ${envelopeId})`),
+				]
+			: []),
+		signingStatement(sql`select f.* from final_documents f join envelopes e on e.id = f.envelope_id
+			where e.id = ${envelopeId} and ${completion ? sql`e.status = 'completed' and ${guard}` : guard} limit 1`),
+	]);
+	const row = results.at(-1)?.[0];
+	return row ? FinalDocumentSchema.parse(decodeSigningRow(finalDocuments, row)) : null;
 }
 
 export async function regenerateFinalDocumentArtifact(
@@ -89,26 +297,46 @@ export async function regenerateFinalDocumentArtifact(
 ): Promise<{ document: FinalDocument; bytes: Uint8Array } | null> {
 	if (!options.documentsBucket) return null;
 	const db = getDb();
+	const snapshot =
+		options.snapshot ?? (await getSigningFinalizationSnapshot(finalDocument.envelopeId));
 	const artifact = await renderFinalDocumentArtifact(
 		finalDocument.envelopeId,
 		options.documentsBucket,
+		snapshot,
 	);
-	await options.documentsBucket.put(finalDocument.r2Key, artifact.bytes, {
+	// OMH logical file names are immutable, including after deletion. Repairing an
+	// older renderer's artifact therefore creates a new content-addressed version.
+	const r2Key = `envelopes/${finalDocument.envelopeId}/final/${artifact.sha256}.pdf`;
+	await registerFinalArtifact(
+		finalDocument.envelopeId,
+		r2Key,
+		snapshot,
+		undefined,
+		finalDocument.r2Key,
+		options.access,
+	);
+	await options.documentsBucket.put(r2Key, artifact.bytes, {
 		httpMetadata: { contentType: artifact.contentType },
 	});
 	if (finalDocument.id) {
-		await db
+		const updated = await db
 			.update(finalDocuments)
 			.set({
+				r2Key,
 				sha256: artifact.sha256,
 				byteSize: artifact.byteSize,
 				contentType: artifact.contentType,
 			})
-			.where(eq(finalDocuments.id, finalDocument.id));
+			.where(
+				sql`${finalDocuments.id} = ${finalDocument.id} and ${finalDocuments.r2Key} = ${finalDocument.r2Key} and ${finalArtifactGuard(finalDocument.envelopeId, snapshot, undefined, options.access)} and exists (select 1 from envelopes e where e.id = ${finalDocument.envelopeId} and e.status = 'completed')`,
+			)
+			.returning();
+		if (updated.length !== 1) throw new Error("Document changed during final PDF repair");
 	}
 	return {
 		document: {
 			...finalDocument,
+			r2Key,
 			sha256: artifact.sha256,
 			byteSize: artifact.byteSize,
 			contentType: artifact.contentType,
@@ -120,35 +348,11 @@ export async function regenerateFinalDocumentArtifact(
 async function renderFinalDocumentArtifact(
 	envelopeId: string,
 	documentsBucket: R2Bucket,
+	snapshot: SigningFinalizationSnapshot,
 ): Promise<FinalDocumentArtifact> {
-	const db = getDb();
-	const sourceDocumentRows = await db
-		.select()
-		.from(sourceDocuments)
-		.where(eq(sourceDocuments.envelopeId, envelopeId))
-		.limit(100);
-	const sourceDocument = latestSourceDocument(
-		sourceDocumentRows.map((document) => SourceDocumentSchema.parse(document)),
-	);
+	const sourceDocument = snapshot.sourceDocument;
 	if (!sourceDocument) throw new Error("Envelope source PDF required");
-
-	const rows = {
-		fields: await db
-			.select()
-			.from(envelopeFields)
-			.where(eq(envelopeFields.envelopeId, envelopeId))
-			.limit(100),
-		values: await db
-			.select()
-			.from(fieldValues)
-			.where(eq(fieldValues.envelopeId, envelopeId))
-			.limit(100),
-		events: await db
-			.select()
-			.from(auditEvents)
-			.where(eq(auditEvents.envelopeId, envelopeId))
-			.limit(100),
-	};
+	const rows = snapshot.rows;
 	const certificateHash = await sha256Hex(
 		new TextEncoder().encode(buildCertificateMaterial(sourceDocument, rows)),
 	);
@@ -173,7 +377,11 @@ export async function getEnvelopeFinalizationStatus(
 	envelopeId: string,
 ): Promise<EnvelopeFinalizationStatus> {
 	const db = getDb();
-	const [envelope] = await db.select().from(envelopes).where(eq(envelopes.id, envelopeId)).limit(1);
+	const [envelope] = await db
+		.select()
+		.from(envelopes)
+		.where(sql`${envelopes.id} = ${envelopeId} and ${noEnvelopeDeletion(envelopeId)}`)
+		.limit(1);
 	const parsedEnvelope = envelope ? EnvelopeSchema.parse(envelope) : null;
 	if (!parsedEnvelope) throw new Error("Envelope not found");
 	const [finalDocument] = await db
@@ -226,7 +434,11 @@ async function getFirstChangeRequest(envelopeId: string): Promise<{ comment: str
 
 export async function getFinalDocument(envelopeId: string): Promise<FinalDocument | null> {
 	const db = getDb();
-	const [envelope] = await db.select().from(envelopes).where(eq(envelopes.id, envelopeId)).limit(1);
+	const [envelope] = await db
+		.select()
+		.from(envelopes)
+		.where(sql`${envelopes.id} = ${envelopeId} and ${noEnvelopeDeletion(envelopeId)}`)
+		.limit(1);
 	const parsedEnvelope = envelope ? EnvelopeSchema.parse(envelope) : null;
 	if (!parsedEnvelope || parsedEnvelope.status !== "completed") return null;
 
@@ -240,63 +452,6 @@ export async function getFinalDocument(envelopeId: string): Promise<FinalDocumen
 
 export async function getSignerFinalDocument(token: SignerToken): Promise<FinalDocument | null> {
 	return getFinalDocument(token.envelopeId);
-}
-
-async function recordCompletionNotifications(
-	envelopeId: string,
-	finalDocumentToken: string | undefined,
-): Promise<void> {
-	if (!finalDocumentToken) return;
-	const db = getDb();
-	const completedDocumentUrl = `/completed-documents/${finalDocumentToken}`;
-	const recipients = (
-		await db
-			.select()
-			.from(envelopeRecipients)
-			.where(eq(envelopeRecipients.envelopeId, envelopeId))
-			.limit(100)
-	).map((recipient) => RecipientSchema.parse(recipient));
-	const tokens = (
-		await db.select().from(signerTokens).where(eq(signerTokens.envelopeId, envelopeId)).limit(100)
-	).map((token) => SignerTokenSchema.parse(token));
-	const partnerRecords = recipients.flatMap((recipient) => {
-		const token = latestSignerToken(tokens, recipient.id);
-		if (!token) return [];
-		return [
-			{
-				envelopeId,
-				recipientId: recipient.id,
-				tokenId: token.id,
-				email: recipient.email,
-				kind: "completion",
-				fallbackUrl: `/completed-documents/${token.token}`,
-			},
-		];
-	});
-	if (partnerRecords.length > 0) {
-		await db.insert(emailSendRecords).values(partnerRecords).returning();
-	}
-
-	const senderTokens = (
-		await db
-			.select()
-			.from(senderVerificationTokens)
-			.where(eq(senderVerificationTokens.envelopeId, envelopeId))
-			.limit(100)
-	).map((token) => SenderVerificationTokenSchema.parse(token));
-	const senderToken = latestVerifiedSenderToken(senderTokens);
-	if (senderToken) {
-		await db
-			.insert(senderVerificationEmailRecords)
-			.values({
-				envelopeId,
-				tokenId: senderToken.id,
-				email: senderToken.email,
-				kind: "completion",
-				fallbackUrl: completedDocumentUrl,
-			})
-			.returning();
-	}
 }
 
 function latestSourceDocument(documents: SourceDocument[]): SourceDocument | null {

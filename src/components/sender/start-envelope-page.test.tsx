@@ -141,14 +141,14 @@ describe("StartEnvelopePage", () => {
 		},
 	])("shows task-specific hero copy for $choiceLabel", ({ choiceLabel, heading, description }) => {
 		// Assumptions for this content slice:
-		// - The Signmos brand label remains unchanged for every selected task.
+		// - The amerged Sign brand link remains available for every selected task.
 		// - The selected task controls both the main heading and its supporting sentence.
 		// - Returning to the chooser continues to restore the generic landing copy.
 		renderStartEnvelopePage({ testTurnstileToken: "test-pass" });
 
 		fireEvent.click(screen.getByRole("button", { name: choiceLabel }));
 
-		expect(screen.getByText("Signmos")).toBeTruthy();
+		expect(screen.getByRole("link", { name: "amerged Sign Startseite" })).toBeTruthy();
 		expect(screen.getByRole("heading", { level: 1, name: heading })).toBeTruthy();
 		expect(screen.getByText(description)).toBeTruthy();
 	});

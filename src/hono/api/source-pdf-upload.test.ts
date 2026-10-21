@@ -6,7 +6,9 @@ import {
 	senderVerificationTokens,
 	sourceDocuments,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_BYTES } from "@/db/envelope/pdf-policy";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes, pdfFixtureText } from "@/test/pdf-fixtures";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -146,7 +148,7 @@ describe("source PDF upload API", () => {
 	it("allows a verified sender session to upload one PDF and records metadata plus audit evidence", async () => {
 		// - PDF bytes are stored in R2 and metadata/hash are persisted in the document row.
 		// - A successful upload appends an immutable audit event.
-		const pdfBytes = new TextEncoder().encode("%PDF-1.7\n%");
+		const pdfBytes = pdfFixtureBytes();
 		const response = await apiHono.request(
 			"/api/envelopes/00000000-0000-4000-8000-000000000001/source-pdf",
 			{
@@ -245,7 +247,7 @@ describe("source PDF upload API", () => {
 	});
 
 	it("streams the persisted source PDF content for browser previews", async () => {
-		const pdfBytes = new TextEncoder().encode("%PDF-1.7 preview\n%%EOF");
+		const pdfBytes = pdfFixtureBytes("preview");
 		state.sourceDocuments.push({
 			id: "10000000-0000-4000-8000-000000000001",
 			envelopeId: "00000000-0000-4000-8000-000000000001",
@@ -276,7 +278,7 @@ describe("source PDF upload API", () => {
 		expect(response.status).toBe(200);
 		expect(response.headers.get("content-type")).toBe("application/pdf");
 		expect(response.headers.get("content-disposition")).toBe("inline");
-		expect(new TextDecoder().decode(await response.arrayBuffer())).toBe("%PDF-1.7 preview\n%%EOF");
+		expect(new TextDecoder().decode(await response.arrayBuffer())).toBe(pdfFixtureText("preview"));
 	});
 
 	it("returns an actionable source PDF missing response for a verified sender session", async () => {
@@ -331,7 +333,7 @@ describe("source PDF upload API", () => {
 			},
 		});
 
-		const tooLargeBytes = new Uint8Array(10 * 1024 * 1024 + 1);
+		const tooLargeBytes = new Uint8Array(MAX_SOURCE_PDF_BYTES + 1);
 		tooLargeBytes.set(new TextEncoder().encode("%PDF-"), 0);
 		const tooLarge = await apiHono.request(
 			"/api/envelopes/00000000-0000-4000-8000-000000000001/source-pdf",
@@ -351,8 +353,8 @@ describe("source PDF upload API", () => {
 		await expect(tooLarge.json()).resolves.toEqual({
 			error: {
 				code: "SOURCE_PDF_TOO_LARGE",
-				message: "Source PDF must be under 10 MB",
-				limitBytes: 10 * 1024 * 1024,
+				message: "Source PDF must be at most 2 MiB",
+				limitBytes: MAX_SOURCE_PDF_BYTES,
 			},
 		});
 
@@ -376,7 +378,7 @@ describe("source PDF upload API", () => {
 					"x-now": "2026-05-21T09:10:00.000Z",
 					"content-type": "application/pdf",
 				},
-				body: new TextEncoder().encode("%PDF-1.7\n%"),
+				body: pdfFixtureBytes(),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);
@@ -413,7 +415,7 @@ describe("source PDF upload API", () => {
 				"idempotency-key": "source-upload-1",
 				"content-type": "application/pdf",
 			},
-			body: new TextEncoder().encode("%PDF-1.7\n%"),
+			body: pdfFixtureBytes(),
 		};
 
 		const first = await apiHono.request(
@@ -470,7 +472,7 @@ describe("source PDF upload API", () => {
 					"content-type": "application/pdf",
 					"x-source-filename": "revised-contract.pdf",
 				},
-				body: new TextEncoder().encode("%PDF-1.7 revised\n%"),
+				body: pdfFixtureBytes("revised"),
 			},
 			{
 				DOCUMENTS_BUCKET: {

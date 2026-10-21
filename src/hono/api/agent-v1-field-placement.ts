@@ -12,6 +12,7 @@ import {
 import type { AgenticPrincipal } from "@/db/agentic-access/bearer-principal";
 import { AgentSelfSignFieldsResponseSchema } from "@/db/agentic-access/schema";
 import { SignaturePlaceholderLimitError, toEnvelopeFieldResponse } from "@/db/envelope";
+import { PdfPolicyError } from "@/db/envelope/pdf-policy";
 import {
 	agentError,
 	commandClaimResponse,
@@ -113,6 +114,20 @@ function handleFieldPlacementError(
 	documentId: string,
 	error: unknown,
 ): Promise<Response> {
+	if (error instanceof PdfPolicyError) {
+		return completeFieldError(
+			recordId,
+			documentId,
+			error.status,
+			agentError({
+				code: error.code,
+				message: error.message,
+				retryable: false,
+				allowedActions: ["place_fields"],
+				recoveryUrl: `/api/v1/documents/${documentId}/fields`,
+			}),
+		);
+	}
 	if (error instanceof SignaturePlaceholderLimitError) {
 		return completeFieldError(
 			recordId,

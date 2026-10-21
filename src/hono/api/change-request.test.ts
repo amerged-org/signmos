@@ -64,35 +64,45 @@ function insertRows(table: unknown, rows: Array<Record<string, unknown>>) {
 	return rows;
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: Record<string, unknown>) => ({
-				where: async () => {
-					if (table === state.envelopesTable) {
-						state.envelopes = state.envelopes.map((envelope) => ({ ...envelope, ...value }));
-					}
-					if (table === state.recipientsTable) {
-						state.recipients = state.recipients.map((recipient) => ({ ...recipient, ...value }));
-					}
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: Record<string, unknown>) => ({
+							where: async () => {
+								if (table === state.envelopesTable) {
+									state.envelopes = state.envelopes.map((envelope) => ({ ...envelope, ...value }));
+								}
+								if (table === state.recipientsTable) {
+									state.recipients = state.recipients.map((recipient) => ({
+										...recipient,
+										...value,
+									}));
+								}
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("partner change requests", () => {
 	beforeEach(() => {
@@ -219,7 +229,7 @@ describe("partner change requests", () => {
 			text: string;
 		};
 		expect(body.to).toEqual(["sender@example.com"]);
-		expect(body.subject).toBe("Changes requested on your document");
+		expect(body.subject).toBe("Änderungen an deinem Vertrag angefragt · amerged Sign");
 		expect(body.html).toContain("https://signmos.example/source-pdf-upload");
 		expect(body.text).toContain("Please update the billing address.");
 		fetchMock.mockRestore();

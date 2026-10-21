@@ -27,6 +27,7 @@ import {
 	agentTwoPartyOperations,
 	agentV1IdentityOperation,
 } from "@/db/agentic-access/schema";
+import { MAX_SOURCE_PDF_BYTES, MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import { EnvelopeStatusSchema } from "@/db/envelope/schema";
 import { createHono } from "./factory";
 import { buildAgentCreatorControlPaths } from "./public-agent-creator-control-contract";
@@ -164,7 +165,14 @@ function buildAgentOpenApiDocument() {
 					operationId: agentSelfSignOperations.sourceUpload.operationId,
 					summary: "Upload an initial or revised creator-owned source PDF",
 					requestContent: {
-						"application/pdf": { schema: { type: "string", format: "binary" } },
+						"application/pdf": {
+							schema: {
+								type: "string",
+								format: "binary",
+								maxLength: MAX_SOURCE_PDF_BYTES,
+								description: `At most ${MAX_SOURCE_PDF_BYTES} bytes and ${MAX_SOURCE_PDF_PAGES} PDF pages`,
+							},
+						},
 					},
 					responseSchema: AgentSourcePdfResponseSchema,
 					responseStatus: "201",
@@ -406,6 +414,7 @@ function agentErrorResponses() {
 		},
 		"404": agentErrorResponse("Document is not visible to this identity"),
 		"409": agentErrorResponse("Final PDF is not ready"),
+		"413": agentErrorResponse("PDF size, page, or signing-field limit exceeded"),
 		"429": agentRateLimitErrorResponse(),
 		"503": agentErrorResponse("Final PDF object is temporarily unavailable"),
 		"502": agentErrorResponse("Configured delivery provider rejected the request"),

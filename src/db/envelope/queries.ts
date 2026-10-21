@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import { assertPdfFieldCount } from "./pdf-policy";
 import {
 	type AddFieldsRequest,
 	type AddRecipientsRequest,
@@ -241,6 +242,7 @@ export async function addFields(
 	}
 
 	const existingFields = await listEnvelopeFields(envelopeId);
+	assertPdfFieldCount(existingFields.length + input.fields.length);
 	const signatureRecipientIds = new Set(
 		existingFields.filter((field) => field.type === "signature").map((field) => field.recipientId),
 	);

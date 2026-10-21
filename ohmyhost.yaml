@@ -1,0 +1,32 @@
+version: 1
+project: amerged-sign
+build:
+  install: pnpm install --frozen-lockfile --ignore-scripts
+  command: pnpm run build
+  output: dist/client
+runtime:
+  mode: edge
+  healthcheck: /api/health/live
+  browser:
+    frames:
+      - https://sign.amerged.com
+      - https://dev-quick-crabs-warn.check.omh.st
+      - https://quick-crabs-warn.check.omh.st
+    frameAncestors:
+      - https://sign.amerged.com
+      - https://dev-quick-crabs-warn.check.omh.st
+      - https://quick-crabs-warn.check.omh.st
+  egress:
+    allow:
+      - https://challenges.cloudflare.com
+database:
+  enabled: true
+  migrations: database/omh-migrations
+auth:
+  provider: none
+mail:
+  enabled: true
+storage:
+  provider: r2
+  jurisdiction: eu
+  public: false

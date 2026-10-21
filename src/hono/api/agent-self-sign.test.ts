@@ -13,9 +13,11 @@ import {
 	signerTokens,
 	sourceDocuments,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_BYTES } from "@/db/envelope/pdf-policy";
 import { hashHistoryCredential } from "@/db/history-access/request";
 import { historySessions } from "@/db/history-access/table";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes, pdfFixtureText } from "@/test/pdf-fixtures";
 import {
 	expectQueuedSelfSignReview,
 	expectReplayAndExactTokenPolling,
@@ -109,7 +111,7 @@ describe("agent self-sign lifecycle", () => {
 		});
 		const documentId = ((await created.json()) as { data: { documentId: string } }).data.documentId;
 		const bucket = agentSelfSignBucket();
-		const pdf = new TextEncoder().encode("%PDF-1.7\nself sign source\n%%EOF");
+		const pdf = pdfFixtureBytes("self sign source");
 		const uploaded = await apiHono.request(
 			`/api/v1/documents/${documentId}/source-pdf`,
 			{
@@ -168,7 +170,7 @@ describe("agent self-sign lifecycle", () => {
 					...selfSignCommandHeaders("upload-source-1", "application/pdf"),
 					"x-source-filename": "agreement.pdf",
 				},
-				body: "%PDF-1.7\nchanged content\n%%EOF",
+				body: pdfFixtureText("changed content"),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);
@@ -191,7 +193,7 @@ describe("agent self-sign lifecycle", () => {
 		await expect(invalid.json()).resolves.toEqual({
 			error: expect.objectContaining({ code: "INVALID_SOURCE_PDF", fields: ["body"] }),
 		});
-		const overLimit = new Uint8Array(10 * 1024 * 1024 + 1);
+		const overLimit = new Uint8Array(MAX_SOURCE_PDF_BYTES + 1);
 		overLimit.set(new TextEncoder().encode("%PDF-1.7"));
 		const oversized = await apiHono.request(
 			`/api/v1/documents/${documentId}/source-pdf`,
@@ -206,7 +208,7 @@ describe("agent self-sign lifecycle", () => {
 		await expect(oversized.json()).resolves.toEqual({
 			error: expect.objectContaining({
 				code: "SOURCE_PDF_TOO_LARGE",
-				limitBytes: 10 * 1024 * 1024,
+				limitBytes: MAX_SOURCE_PDF_BYTES,
 				fields: ["body"],
 			}),
 		});

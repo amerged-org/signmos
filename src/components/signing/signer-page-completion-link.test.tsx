@@ -53,25 +53,25 @@ describe("SignerPage completion detail link", () => {
 
 		render(<SignerPage token="self-sign-token" />);
 
-		await screen.findByText("signature");
-		fireEvent.change(screen.getByLabelText("Typed signature text"), {
+		await screen.findByText("Unterschrift");
+		fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {
 			target: { value: "Ada Self Sign" },
 		});
 		await waitFor(() =>
-			expect(screen.getByLabelText("Typed signature text")).toHaveProperty(
+			expect(screen.getByLabelText("Dein vollständiger Name")).toHaveProperty(
 				"value",
 				"Ada Self Sign",
 			),
 		);
-		fireEvent.click(screen.getByRole("button", { name: "Complete signing" }));
+		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
-		await screen.findByText("Document complete");
-		expect(screen.getByRole("link", { name: "View completed document" }).getAttribute("href")).toBe(
-			"/completed-documents/self-sign-token",
-		);
-		expect(screen.getByRole("link", { name: "Download final PDF" }).getAttribute("href")).toBe(
-			"/api/final-documents/self-sign-token/pdf",
-		);
+		await screen.findByText("Vertrag abgeschlossen");
+		expect(
+			screen.getByRole("link", { name: "Unterzeichneten Vertrag ansehen" }).getAttribute("href"),
+		).toBe("/completed-documents/self-sign-token");
+		expect(
+			screen.getByRole("link", { name: "Unterzeichnete PDF herunterladen" }).getAttribute("href"),
+		).toBe("/api/final-documents/self-sign-token/pdf");
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
 });

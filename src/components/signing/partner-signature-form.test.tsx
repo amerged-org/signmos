@@ -20,17 +20,17 @@ describe("PartnerSignatureForm", () => {
 			/>,
 		);
 
-		expect(screen.getByLabelText("Typed signature text")).toHaveProperty("value", "Ada Saved");
-		expect(screen.getByLabelText("Signature font")).toHaveProperty("value", "serif");
-		expect(screen.getByLabelText("Remember signature for future envelopes")).toHaveProperty(
+		expect(screen.getByLabelText("Dein vollständiger Name")).toHaveProperty("value", "Ada Saved");
+		expect(screen.getByLabelText("Schriftstil")).toHaveProperty("value", "serif");
+		expect(screen.getByLabelText("Unterschrift für weitere Verträge merken")).toHaveProperty(
 			"checked",
 			true,
 		);
 
-		fireEvent.change(screen.getByLabelText("Typed signature text"), {
+		fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {
 			target: { value: "Ada Updated" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Complete signing" }));
+		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
 		await waitFor(() => expect(submissions).toHaveLength(1));
 		expect(submissions[0]).toEqual({
@@ -56,19 +56,19 @@ describe("PartnerSignatureForm", () => {
 			/>,
 		);
 
-		expect(screen.getByRole("button", { name: "Choose drawn signature" })).toHaveProperty(
+		expect(screen.getByRole("button", { name: "Zeichnen wählen" })).toHaveProperty(
 			"ariaPressed",
 			"true",
 		);
 		expect(
-			screen.getByLabelText("Draw signature pad").querySelector("path")?.getAttribute("d"),
+			screen.getByLabelText("Unterschrift zeichnen").querySelector("path")?.getAttribute("d"),
 		).toBe("M 12 36 L 48 20 L 96 42");
-		expect(screen.getByLabelText("Remember signature for future envelopes")).toHaveProperty(
+		expect(screen.getByLabelText("Unterschrift für weitere Verträge merken")).toHaveProperty(
 			"checked",
 			true,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Complete signing" }));
+		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
 		await waitFor(() => expect(submissions).toHaveLength(1));
 		expect(submissions[0]).toEqual({
@@ -94,8 +94,8 @@ describe("PartnerSignatureForm", () => {
 			/>,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Choose drawn signature" }));
-		const signaturePad = screen.getByLabelText("Draw signature pad");
+		fireEvent.click(screen.getByRole("button", { name: "Zeichnen wählen" }));
+		const signaturePad = screen.getByLabelText("Unterschrift zeichnen");
 		Object.defineProperty(signaturePad, "getBoundingClientRect", {
 			configurable: true,
 			value: () => ({
@@ -114,7 +114,7 @@ describe("PartnerSignatureForm", () => {
 		fireEvent.mouseDown(signaturePad, { clientX: 12, clientY: 36 });
 		fireEvent.mouseMove(signaturePad, { clientX: 48, clientY: 20 });
 		fireEvent.mouseUp(signaturePad);
-		fireEvent.click(screen.getByRole("button", { name: "Complete signing" }));
+		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
 		await waitFor(() => expect(submissions).toHaveLength(1));
 		expect(submissions[0]).toEqual({

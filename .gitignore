@@ -21,3 +21,6 @@ count.txt
 .staging.vars
 .production.vars
 .wrangler/
+/.ohmyhost/
+
+.ohmyhost/

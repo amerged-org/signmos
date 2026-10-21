@@ -31,8 +31,8 @@ describe("SigningVerificationPage", () => {
 
 		render(<SigningVerificationPage token="partner-token" onVerified={onVerified} />);
 
-		await screen.findByText("Email verified");
-		expect(screen.getByRole("link", { name: "Continue to sign" }).getAttribute("href")).toBe(
+		await screen.findByText("E-Mail-Adresse bestätigt");
+		expect(screen.getByRole("link", { name: "Zum Vertrag" }).getAttribute("href")).toBe(
 			"/signing/partner-token",
 		);
 		await waitFor(() => expect(onVerified).toHaveBeenCalledWith("/signing/partner-token"));
@@ -59,7 +59,7 @@ describe("SigningVerificationPage", () => {
 
 		render(<SigningVerificationPage token="expired-token" onVerified={onVerified} />);
 
-		await screen.findByText("Verification failed");
+		await screen.findByText("Bestätigung nicht möglich");
 		const alert = screen.getByRole("alert");
 		expect(alert.textContent).toContain("Partner verification token has expired");
 		expect(onVerified).not.toHaveBeenCalled();

@@ -9,7 +9,6 @@ import {
 	type EmailDeliveryEnv,
 	EmailDeliveryError,
 	getCompletedDocumentLinkForSignerToken,
-	getEnvelopeStatus,
 	getSignerFinalDocument,
 	getSignerSession,
 	getSignerSourceDocument,
@@ -21,16 +20,18 @@ import {
 	SigningCompletionBlockedError,
 	SigningFieldPlacementBlockedError,
 	SigningFieldPlacementNotFoundError,
+	SigningFinalizationError,
 	SigningNoAssignedFieldsError,
 	updateSignerFieldPlacement,
 	verifyPartnerToken,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import { createHono } from "@/hono/factory";
 
 const signingEndpoint = createHono();
 
 const SigningFieldPlacementRequestSchema = z.object({
-	page: z.number().int().min(1).optional(),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).optional(),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 });
@@ -88,7 +89,19 @@ signingEndpoint.get("/:token/source-pdf", async (c) => {
 		);
 	}
 
-	return new Response(await object.arrayBuffer(), {
+	const bytes = await object.arrayBuffer();
+	const current = await getUsableToken(token.token, c.req.header("x-now"));
+	if (current instanceof Response) return current;
+	if (
+		current.id !== token.id ||
+		current.envelopeId !== token.envelopeId ||
+		current.recipientId !== token.recipientId
+	)
+		return c.json(
+			{ error: { code: "SOURCE_PDF_NOT_FOUND", message: "Source PDF is not available" } },
+			404,
+		);
+	return new Response(bytes, {
 		headers: { "content-type": document.contentType },
 	});
 });
@@ -124,7 +137,20 @@ signingEndpoint.get("/:token/final-pdf", async (c) => {
 		);
 	}
 
-	return new Response(await object.arrayBuffer(), {
+	const bytes = await object.arrayBuffer();
+	const current = await getUsableToken(token.token, c.req.header("x-now"));
+	if (current instanceof Response) return current;
+	if (
+		current.id !== token.id ||
+		current.envelopeId !== token.envelopeId ||
+		current.recipientId !== token.recipientId ||
+		current.envelopeStatus !== "completed"
+	)
+		return c.json(
+			{ error: { code: "FINAL_PDF_NOT_FOUND", message: "Completed PDF is not available" } },
+			404,
+		);
+	return new Response(bytes, {
 		headers: { "content-type": document.contentType },
 	});
 });
@@ -189,7 +215,9 @@ signingEndpoint.patch("/:token/fields/:fieldId", async (c) => {
 });
 
 signingEndpoint.post("/:token/complete", async (c) => {
-	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"));
+	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"), {
+		completion: true,
+	});
 	if (token instanceof Response) return token;
 
 	const parsed = CompleteSigningRequestSchema.safeParse(await c.req.json());
@@ -212,9 +240,23 @@ signingEndpoint.post("/:token/complete", async (c) => {
 				documentsBucket: bucket,
 				now: parseNow(c.req.header("x-now")),
 				emailDelivery: getEmailDeliveryOptions(c),
+				context: token.completionContext,
 			}),
 		});
 	} catch (error) {
+		if (error instanceof SigningFinalizationError) {
+			return c.json(
+				{
+					error: {
+						code: error.code,
+						message: error.message,
+						retryable: true,
+						allowedActions: ["retry_completion"],
+					},
+				},
+				503,
+			);
+		}
 		if (error instanceof EmailDeliveryError) {
 			return c.json(emailDeliveryErrorBody(error, c.env as EmailDeliveryEnv | undefined), 502);
 		}
@@ -305,11 +347,26 @@ signingEndpoint.post("/:token/decline", async (c) => {
 		);
 	}
 
-	return c.json({ data: await declineSigning(token, parsed.data) });
+	try {
+		return c.json({
+			data: await declineSigning(token, parsed.data, { now: parseNow(c.req.header("x-now")) }),
+		});
+	} catch (error) {
+		if (error instanceof SigningCompletionBlockedError)
+			return c.json(
+				{ error: { code: "SIGNING_BLOCKED", message: "This document can no longer be declined" } },
+				409,
+			);
+		throw error;
+	}
 });
 
-async function getUsableToken(tokenValue: string, nowHeader: string | undefined) {
-	const token = await resolveSignerToken(tokenValue);
+async function getUsableToken(
+	tokenValue: string,
+	nowHeader: string | undefined,
+	options: { completion?: boolean } = {},
+) {
+	const token = await resolveSignerToken(tokenValue, options);
 	if (!token) {
 		return Response.json(
 			{
@@ -323,8 +380,8 @@ async function getUsableToken(tokenValue: string, nowHeader: string | undefined)
 	}
 
 	const now = new Date(nowHeader ?? Date.now());
-	const envelopeStatus = await getEnvelopeStatus(token.envelopeId);
-	if (envelopeStatus === "deleted") {
+	const envelopeStatus = token.envelopeStatus;
+	if (envelopeStatus === "deleted" || token.deletionPending) {
 		return Response.json(
 			{
 				error: {

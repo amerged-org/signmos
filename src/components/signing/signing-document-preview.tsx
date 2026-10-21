@@ -1,5 +1,6 @@
 import { FileText } from "lucide-react";
 import { pdfPage } from "@/components/envelopes/field-placement-workspace";
+import { useNoncePositionStyle } from "@/components/nonce-position-style";
 import { TextLink } from "@/components/patterns/text-link";
 import { cn } from "@/lib/utils";
 import type { PartnerSignaturePreference } from "./partner-signature-form";
@@ -59,20 +60,20 @@ export function SigningDocumentPreview({
 	return (
 		<section className="space-y-3">
 			<div className="flex flex-wrap items-center justify-between gap-3">
-				<h2 className="text-balance font-semibold text-xl">Source PDF</h2>
+				<h2 className="text-balance font-semibold text-xl">Dein Vertrag</h2>
 				<TextLink
 					className="inline-flex items-center gap-2 text-sm"
 					href={session.sourceDocument.downloadUrl}
 				>
 					<FileText aria-hidden="true" className="size-4" />
-					Open source PDF
+					PDF öffnen
 				</TextLink>
 			</div>
 			<div className="grid gap-4">
 				{pages.map((page, index) => (
 					<fieldset
 						key={page}
-						aria-label={`Source PDF page ${page}`}
+						aria-label={`Vertrag Seite ${page}`}
 						data-signing-pdf-page
 						className="relative aspect-[612/792] w-full overflow-hidden rounded-md border bg-white"
 						onPointerMove={onContinueFieldDrag}
@@ -82,11 +83,11 @@ export function SigningDocumentPreview({
 						onMouseUp={onStopFieldDrag}
 						onMouseLeave={onStopFieldDrag}
 					>
-						<legend className="sr-only">Source PDF page {page}</legend>
+						<legend className="sr-only">Vertrag Seite {page}</legend>
 						<iframe
 							className="absolute inset-0 h-full w-full bg-muted"
 							src={pdfPreviewUrl(session.sourceDocument.downloadUrl, page)}
-							title={index === 0 ? "Source PDF preview" : `Source PDF preview page ${page}`}
+							title={index === 0 ? "Vertragsvorschau" : `Vertragsvorschau Seite ${page}`}
 						/>
 						<div className="pointer-events-none absolute inset-0">
 							{previewFields
@@ -121,14 +122,10 @@ function SigningPreviewFieldOverlay({
 }) {
 	const hasValue = Boolean(field.value?.trim());
 	const isDraggable = canDrag && field.assignedToCurrentSigner && !hasValue;
-	const style = {
-		left: `${(field.x / pdfPage.width) * 100}%`,
-		top: `${(field.y / pdfPage.height) * 100}%`,
-		width: `${(field.width / pdfPage.width) * 100}%`,
-		height: `${(field.height / pdfPage.height) * 100}%`,
-	};
+	const position = useNoncePositionStyle(field, pdfPage);
 	const className = cn(
 		"absolute flex overflow-hidden rounded border-2 px-2 text-slate-950 shadow-sm",
+		position.className,
 		hasValue ? "border-emerald-700 bg-white/90" : "border-blue-700 bg-blue-50/90",
 		field.assignedToCurrentSigner && !hasValue && "border-dashed",
 		isDraggable && "pointer-events-auto cursor-move",
@@ -138,33 +135,39 @@ function SigningPreviewFieldOverlay({
 		<PreviewFieldValue field={field} value={field.value} />
 	) : (
 		<>
-			<span className="truncate font-medium capitalize">{field.type} here</span>
+			<span className="truncate font-medium capitalize">
+				{field.type === "signature" ? "Hier unterschreiben" : "Datum"}
+			</span>
 			<span className="truncate">{field.recipientName}</span>
 		</>
 	);
 	if (isDraggable) {
 		return (
-			<button
-				aria-label={`${field.recipientName} ${field.type} placeholder`}
-				type="button"
-				className={className}
-				style={style}
-				onPointerDown={(event) => onStartDrag(event, field)}
-				onMouseDown={(event) => onStartDrag(event, field)}
-			>
-				{content}
-			</button>
+			<>
+				{position.styles}
+				<button
+					aria-label={`${field.recipientName} · ${field.type === "signature" ? "Unterschrift" : "Datum"} · Feld`}
+					type="button"
+					className={className}
+					onPointerDown={(event) => onStartDrag(event, field)}
+					onMouseDown={(event) => onStartDrag(event, field)}
+				>
+					{content}
+				</button>
+			</>
 		);
 	}
 	return (
-		<div
-			aria-label={`${field.recipientName} ${field.type} ${hasValue ? "value" : "placeholder"}`}
-			role="img"
-			className={className}
-			style={style}
-		>
-			{content}
-		</div>
+		<>
+			{position.styles}
+			<div
+				aria-label={`${field.recipientName} · ${field.type === "signature" ? "Unterschrift" : "Datum"} · ${hasValue ? "ausgefüllt" : "Feld"}`}
+				role="img"
+				className={className}
+			>
+				{content}
+			</div>
+		</>
 	);
 }
 
@@ -189,7 +192,7 @@ function signerPreviewFields(session: SignerSession): SignerPreviewField[] {
 	return session.fields.map((field) => ({
 		...field,
 		recipientId: session.recipientId,
-		recipientName: "Signer",
+		recipientName: "Unterzeichner",
 		value: null,
 		assignedToCurrentSigner: true,
 	}));

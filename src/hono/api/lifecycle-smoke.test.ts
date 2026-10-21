@@ -12,6 +12,7 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -138,41 +139,51 @@ function deleteRows(table: unknown) {
 	return [];
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: Record<string, unknown>) => ({
-				where: async () => {
-					if (table === state.envelopesTable) {
-						state.envelopes = state.envelopes.map((envelope) => ({ ...envelope, ...value }));
-					}
-					if (table === state.recipientsTable) {
-						state.recipients = state.recipients.map((recipient) => ({ ...recipient, ...value }));
-					}
-					if (table === state.tokensTable) {
-						state.tokens = state.tokens.map((token) => ({ ...token, ...value }));
-					}
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: Record<string, unknown>) => ({
+							where: async () => {
+								if (table === state.envelopesTable) {
+									state.envelopes = state.envelopes.map((envelope) => ({ ...envelope, ...value }));
+								}
+								if (table === state.recipientsTable) {
+									state.recipients = state.recipients.map((recipient) => ({
+										...recipient,
+										...value,
+									}));
+								}
+								if (table === state.tokensTable) {
+									state.tokens = state.tokens.map((token) => ({ ...token, ...value }));
+								}
+								return [];
+							},
+						}),
+					}),
+					delete: (table: unknown) => ({
+						where: async () => deleteRows(table),
+					}),
 				},
-			}),
-		}),
-		delete: (table: unknown) => ({
-			where: async () => deleteRows(table),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("agent lifecycle smoke path", () => {
 	beforeEach(() => {
@@ -235,7 +246,7 @@ describe("agent lifecycle smoke path", () => {
 					"content-type": "application/pdf",
 					"x-internal-user-id": "user_123",
 				},
-				body: "%PDF-1.4\n%%EOF",
+				body: pdfFixtureText(),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);
@@ -347,7 +358,7 @@ describe("agent lifecycle smoke path", () => {
 					"content-type": "application/pdf",
 					"x-internal-user-id": "sender_123",
 				},
-				body: "%PDF-1.4\nrevised\n%%EOF",
+				body: pdfFixtureText("revised"),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);
