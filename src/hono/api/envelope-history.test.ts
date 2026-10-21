@@ -51,18 +51,25 @@ function selectRows(table: unknown): Array<Record<string, unknown>> {
 	return [];
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-				limit: async () => selectRows(table),
-			}),
-		}),
-	}),
-}));
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+							limit: async () => selectRows(table),
+						}),
+					}),
+				},
+				selectRows,
+			),
+	};
+});
 
 describe("confirmed email document history API", () => {
 	beforeEach(() => {

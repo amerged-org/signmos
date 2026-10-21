@@ -41,36 +41,43 @@ function selectQuery(table: unknown) {
 	});
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => selectQuery(table),
-		}),
-		update: (table: unknown) => ({
-			set: (values: Record<string, unknown>) => ({
-				where: () => ({
-					returning: async () => {
-						if (table !== state.tables.get("sessions")) return [];
-						const session = state.sessions.find((candidate) => candidate.status === "active");
-						if (!session) return [];
-						Object.assign(session, values);
-						return [session];
-					},
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (row: Record<string, unknown>) => ({
-				returning: async () => {
-					if (table !== state.tables.get("securityEvents")) return [];
-					const inserted = { id: crypto.randomUUID(), ...row };
-					state.securityEvents.push(inserted);
-					return [inserted];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => selectQuery(table),
+					}),
+					update: (table: unknown) => ({
+						set: (values: Record<string, unknown>) => ({
+							where: () => ({
+								returning: async () => {
+									if (table !== state.tables.get("sessions")) return [];
+									const session = state.sessions.find((candidate) => candidate.status === "active");
+									if (!session) return [];
+									Object.assign(session, values);
+									return [session];
+								},
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (row: Record<string, unknown>) => ({
+							returning: async () => {
+								if (table !== state.tables.get("securityEvents")) return [];
+								const inserted = { id: crypto.randomUUID(), ...row };
+								state.securityEvents.push(inserted);
+								return [inserted];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("history completed-document gateway", () => {
 	beforeEach(async () => {

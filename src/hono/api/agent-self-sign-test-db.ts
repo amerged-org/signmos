@@ -1,6 +1,7 @@
 import { inflateSync } from "node:zlib";
 import { PDFDocument } from "pdf-lib";
 import { agenticApiTokens, agenticSecurityEvents } from "@/db/agentic-access/table";
+import { wrapSigningTestDb } from "@/db/envelope/signing-test-db";
 import {
 	auditEvents,
 	emailSendRecords,
@@ -135,34 +136,38 @@ function nextId(sequence: number): string {
 	return `80000000-0000-4000-8000-${String(sequence).padStart(12, "0")}`;
 }
 
-export const getAgentSelfSignTestDb = () => ({
-	select: () => ({ from: (table: unknown) => selectQuery(table) }),
-	insert: (table: unknown) => ({
-		values: (value: AgentSelfSignStoredRow | AgentSelfSignStoredRow[]) => ({
-			returning: async () => insertedRows(table, Array.isArray(value) ? value : [value]),
-		}),
-	}),
-	update: (table: unknown) => ({
-		set: (values: AgentSelfSignStoredRow) => ({
-			where: (condition: unknown) => {
-				const updated = selfSignRows(table).filter((row) => matches(row, condition));
-				for (const row of updated) Object.assign(row, values);
-				return mutationQuery(updated);
-			},
-		}),
-	}),
-	delete: (table: unknown) => ({
-		where: (condition: unknown) => {
-			const target = selfSignRows(table);
-			const deleted = target.filter((row) => matches(row, condition));
-			agentSelfSignTestState.rows.set(
-				table,
-				target.filter((row) => !deleted.includes(row)),
-			);
-			return mutationQuery(deleted);
+export const getAgentSelfSignTestDb = () =>
+	wrapSigningTestDb(
+		{
+			select: () => ({ from: (table: unknown) => selectQuery(table) }),
+			insert: (table: unknown) => ({
+				values: (value: AgentSelfSignStoredRow | AgentSelfSignStoredRow[]) => ({
+					returning: async () => insertedRows(table, Array.isArray(value) ? value : [value]),
+				}),
+			}),
+			update: (table: unknown) => ({
+				set: (values: AgentSelfSignStoredRow) => ({
+					where: (condition: unknown) => {
+						const updated = selfSignRows(table).filter((row) => matches(row, condition));
+						for (const row of updated) Object.assign(row, values);
+						return mutationQuery(updated);
+					},
+				}),
+			}),
+			delete: (table: unknown) => ({
+				where: (condition: unknown) => {
+					const target = selfSignRows(table);
+					const deleted = target.filter((row) => matches(row, condition));
+					agentSelfSignTestState.rows.set(
+						table,
+						target.filter((row) => !deleted.includes(row)),
+					);
+					return mutationQuery(deleted);
+				},
+			}),
 		},
-	}),
-});
+		selfSignRows,
+	);
 
 export function agentSelfSignBucket(): R2Bucket {
 	return {

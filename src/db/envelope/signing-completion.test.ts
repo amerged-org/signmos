@@ -11,41 +11,58 @@ import {
 	sourceDocuments,
 } from "./table";
 
-const state = vi.hoisted(() => ({ rows: new Map<unknown, Array<Record<string, unknown>>>() }));
-
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({ limit: async () => state.rows.get(table) ?? [] }),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (input: Record<string, unknown> | Array<Record<string, unknown>>) => ({
-				returning: async () => {
-					const rows = state.rows.get(table) ?? [];
-					const inserted = (Array.isArray(input) ? input : [input]).map((row, index) => ({
-						id: `90000000-0000-4000-8000-${String(rows.length + index + 1).padStart(12, "0")}`,
-						createdAt: new Date(),
-						...row,
-					}));
-					state.rows.set(table, [...rows, ...inserted]);
-					return inserted;
-				},
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (patch: Record<string, unknown>) => ({
-				where: async () => {
-					state.rows.set(
-						table,
-						(state.rows.get(table) ?? []).map((row) => ({ ...row, ...patch })),
-					);
-				},
-			}),
-		}),
-	}),
+const state = vi.hoisted(() => ({
+	rows: new Map<unknown, Array<Record<string, unknown>>>(),
+	calls: 0,
 }));
+
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => {
+									return state.rows.get(table) ?? [];
+								},
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (input: Record<string, unknown> | Array<Record<string, unknown>>) => ({
+							returning: async () => {
+								const rows = state.rows.get(table) ?? [];
+								const inserted = (Array.isArray(input) ? input : [input]).map((row, index) => ({
+									id: `90000000-0000-4000-8000-${String(rows.length + index + 1).padStart(12, "0")}`,
+									createdAt: new Date(),
+									...row,
+								}));
+								state.rows.set(table, [...rows, ...inserted]);
+								return inserted;
+							},
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (patch: Record<string, unknown>) => ({
+							where: async () => {
+								state.rows.set(
+									table,
+									(state.rows.get(table) ?? []).map((row) => ({ ...row, ...patch })),
+								);
+							},
+						}),
+					}),
+				},
+				(table) => state.rows.get(table) ?? [],
+				() => {
+					state.calls += 1;
+				},
+			),
+	};
+});
 
 const envelopeId = "00000000-0000-4000-8000-000000000001";
 const recipientId = "20000000-0000-4000-8000-000000000001";
@@ -66,6 +83,7 @@ describe("truthful signing finalization", () => {
 
 	beforeEach(async () => {
 		state.rows.clear();
+		state.calls = 0;
 		state.rows.set(envelopes, [
 			{
 				id: envelopeId,
@@ -133,6 +151,15 @@ describe("truthful signing finalization", () => {
 			get: async () => ({ arrayBuffer: async () => Uint8Array.from(bytes).buffer }),
 			put,
 		} as unknown as R2Bucket;
+	});
+
+	it("finishes the recipient path with four database calls, leaving the private file and mail budget", async () => {
+		await completeSigning(
+			token,
+			{ signatureName: "Ada", rememberSignature: false },
+			{ documentsBucket: bucket },
+		);
+		expect(state.calls).toBeLessThanOrEqual(4);
 	});
 
 	it("keeps a failed last-signature PDF open and resumes without duplicating or replacing recorded signatures", async () => {

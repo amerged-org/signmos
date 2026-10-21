@@ -1,5 +1,11 @@
 import { getEnvelopeCreatorEmail } from "@/db/envelope";
-import { type AdminAuthEnv, type AdminPrincipal, denied, resolveAdminRequest } from "./auth";
+import {
+	type AdminAuthEnv,
+	type AdminPrincipal,
+	denied,
+	rememberVerifiedAdminRequest,
+	resolveAdminRequest,
+} from "./auth";
 
 export type HostedRequestAuthorization =
 	| { request: Request; principal?: AdminPrincipal }
@@ -65,7 +71,9 @@ export async function authorizeHostedRequest(
 	if (ownershipError) return { response: ownershipError };
 	const headers = new Headers(clean.headers);
 	headers.set("x-internal-user-id", auth.principal.email);
-	return { request: new Request(clean, { headers }), principal: auth.principal };
+	const forwarded = new Request(clean, { headers });
+	rememberVerifiedAdminRequest(clean, forwarded);
+	return { request: forwarded, principal: auth.principal };
 }
 
 async function envelopeOwnershipError(path: string, email: string): Promise<Response | null> {

@@ -185,30 +185,37 @@ function conditionValues(condition: unknown): unknown[] {
 	return condition.queryChunks.flatMap(conditionValues);
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: unknown[] | unknown) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: UpdateValue) => ({
-				where: async (condition: unknown) => {
-					updateRows(table, value, condition);
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: unknown[] | unknown) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: UpdateValue) => ({
+							where: async (condition: unknown) => {
+								updateRows(table, value, condition);
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				(table) => selectRows(table) as Array<Record<string, unknown>>,
+			),
+	};
+});
 
 describe("signing flow API", () => {
 	beforeEach(() => {

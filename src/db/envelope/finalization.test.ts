@@ -11,46 +11,53 @@ const dbState = vi.hoisted(() => ({
 	failNextUpdate: false,
 }));
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({ limit: async () => dbState.rows.get(table) ?? [] }),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (row: Record<string, unknown>) => ({
-				returning: async () => {
-					const inserted = {
-						id: "90000000-0000-4000-8000-000000000001",
-						createdAt: new Date("2026-10-21T09:00:00Z"),
-						...row,
-					};
-					const records = dbState.rows.get(table) ?? [];
-					records.push(inserted);
-					dbState.rows.set(table, records);
-					return [inserted];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({ limit: async () => dbState.rows.get(table) ?? [] }),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (row: Record<string, unknown>) => ({
+							returning: async () => {
+								const inserted = {
+									id: "90000000-0000-4000-8000-000000000001",
+									createdAt: new Date("2026-10-21T09:00:00Z"),
+									...row,
+								};
+								const records = dbState.rows.get(table) ?? [];
+								records.push(inserted);
+								dbState.rows.set(table, records);
+								return [inserted];
+							},
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (patch: Record<string, unknown>) => ({
+							where: async () => {
+								if (dbState.failNextUpdate) {
+									dbState.failNextUpdate = false;
+									throw new Error("database unavailable");
+								}
+								dbState.updates.push(patch);
+								const records = dbState.rows.get(table) ?? [];
+								dbState.rows.set(
+									table,
+									records.map((row) => ({ ...row, ...patch })),
+								);
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (patch: Record<string, unknown>) => ({
-				where: async () => {
-					if (dbState.failNextUpdate) {
-						dbState.failNextUpdate = false;
-						throw new Error("database unavailable");
-					}
-					dbState.updates.push(patch);
-					const records = dbState.rows.get(table) ?? [];
-					dbState.rows.set(
-						table,
-						records.map((row) => ({ ...row, ...patch })),
-					);
-				},
-			}),
-		}),
-	}),
-}));
+				(table) => dbState.rows.get(table) ?? [],
+			),
+	};
+});
 
 const envelopeId = "00000000-0000-4000-8000-000000000001";
 
@@ -61,6 +68,15 @@ describe("immutable final document artifacts", () => {
 
 	beforeEach(async () => {
 		dbState.rows.clear();
+		dbState.rows.set(envelopes, [
+			{
+				id: envelopeId,
+				status: "completed",
+				signingMode: "only_me",
+				createdBy: "owner@amerged.com",
+				createdAt: new Date(),
+			},
+		]);
 		dbState.updates.length = 0;
 		dbState.failNextUpdate = false;
 		const pdf = await PDFDocument.create();

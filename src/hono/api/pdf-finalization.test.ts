@@ -156,38 +156,45 @@ function insertFinalDocuments(rows: Array<Record<string, unknown>>) {
 	return inserted;
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: { status?: string }) => ({
-				where: async () => {
-					if (table === state.recipientsTable) {
-						state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
-					}
-					if (table === state.envelopesTable) {
-						state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
-					}
-					if (table === state.finalDocumentsTable) {
-						state.finalDocuments[0] = { ...state.finalDocuments[0], ...value };
-					}
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: { status?: string }) => ({
+							where: async () => {
+								if (table === state.recipientsTable) {
+									state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
+								}
+								if (table === state.envelopesTable) {
+									state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
+								}
+								if (table === state.finalDocumentsTable) {
+									state.finalDocuments[0] = { ...state.finalDocuments[0], ...value };
+								}
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("PDF finalization", () => {
 	beforeEach(async () => {
@@ -347,7 +354,7 @@ describe("PDF finalization", () => {
 			expect.objectContaining({
 				email: "sender@example.com",
 				kind: "completion",
-				fallbackUrl: "/completed-documents/90000000-0000-4000-8000-000000000001",
+				fallbackUrl: `/completed-documents/${state.finalDocuments[0]?.id}`,
 			}),
 		]);
 		for (const record of [...state.emailSendRecords, ...state.senderVerificationEmailRecords]) {

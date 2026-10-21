@@ -41,32 +41,39 @@ function updateRows(table: unknown, values: StoredRow): StoredRow[] {
 	Object.assign(row, values);
 	return [row];
 }
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({ from: (table: unknown) => selectQuery(table) }),
-		insert: (table: unknown) => ({
-			values: (values: StoredRow | StoredRow[]) => ({
-				returning: async () => {
-					const inserted = (Array.isArray(values) ? values : [values]).map((value) => ({
-						id: crypto.randomUUID(),
-						createdAt: new Date(now),
-						...value,
-					}));
-					rowsFor(table).push(...inserted);
-					return inserted;
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({ from: (table: unknown) => selectQuery(table) }),
+					insert: (table: unknown) => ({
+						values: (values: StoredRow | StoredRow[]) => ({
+							returning: async () => {
+								const inserted = (Array.isArray(values) ? values : [values]).map((value) => ({
+									id: crypto.randomUUID(),
+									createdAt: new Date(now),
+									...value,
+								}));
+								rowsFor(table).push(...inserted);
+								return inserted;
+							},
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (values: StoredRow) => ({
+							where: () => {
+								const updated = updateRows(table, values);
+								return Object.assign(Promise.resolve([]), { returning: async () => updated });
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (values: StoredRow) => ({
-				where: () => {
-					const updated = updateRows(table, values);
-					return Object.assign(Promise.resolve([]), { returning: async () => updated });
-				},
-			}),
-		}),
-	}),
-}));
+				rowsFor,
+			),
+	};
+});
 function tableRows(name: string): StoredRow[] {
 	const table = state.tables.get(name);
 	if (!table) throw new Error(`Missing test table ${name}`);

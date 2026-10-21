@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/setup";
 import {
 	buildSenderPartnerSignedEmail,
@@ -6,7 +6,7 @@ import {
 	type EmailDeliveryOptions,
 	toAbsoluteDeliveryUrl,
 } from "./email-delivery";
-import { finalizeCompletedEnvelope } from "./finalization";
+import { finalizeCompletedEnvelope, getSigningFinalizationSnapshot } from "./finalization";
 import {
 	type CompleteSigningRequest,
 	type CompleteSigningResult,
@@ -19,6 +19,13 @@ import {
 	RecipientSchema,
 	type SignerToken,
 } from "./schema";
+import {
+	isSigningGuardFailure,
+	noEnvelopeDeletion,
+	type SigningBatchQuery,
+	signingBatch,
+	signingStatement,
+} from "./signing-batch";
 import {
 	auditEvents,
 	emailSendRecords,
@@ -52,60 +59,53 @@ export class SigningFinalizationError extends Error {
 	}
 }
 
+export interface SigningCompletionContext {
+	envelope: Envelope;
+	fields: EnvelopeField[];
+	recipients: Recipient[];
+	saved: Array<Record<string, unknown>>;
+}
+
 export async function completeSigning(
 	token: SignerToken,
 	input: CompleteSigningRequest,
-	options: { documentsBucket?: R2Bucket; now?: Date; emailDelivery?: EmailDeliveryOptions } = {},
+	options: {
+		documentsBucket?: R2Bucket;
+		now?: Date;
+		emailDelivery?: EmailDeliveryOptions;
+		context?: SigningCompletionContext;
+	} = {},
 ): Promise<CompleteSigningResult> {
 	const db = getDb();
 	const signature = normalizeSigningSignature(input);
 	const signingDate = formatSigningDate(options.now ?? new Date());
-	const [envelope] = await db
-		.select()
-		.from(envelopes)
-		.where(eq(envelopes.id, token.envelopeId))
-		.limit(1);
-	const parsedEnvelope = envelope ? EnvelopeSchema.parse(envelope) : null;
-	if (!parsedEnvelope) throw new Error("Envelope not found");
-	if (parsedEnvelope.status !== "sent") {
+	const context = options.context ?? (await getSigningCompletionContext(token));
+	const parsedEnvelope = context.envelope;
+	if (parsedEnvelope.status !== "sent")
 		throw new SigningCompletionBlockedError(parsedEnvelope.status);
-	}
-
-	const fields = (
-		await db
-			.select()
-			.from(envelopeFields)
-			.where(eq(envelopeFields.recipientId, token.recipientId))
-			.limit(100)
-	)
-		.map((field) => EnvelopeFieldSchema.parse(field))
-		.filter(
-			(field) => field.envelopeId === token.envelopeId && field.recipientId === token.recipientId,
-		);
+	const fields = context.fields.filter(
+		(field) => field.envelopeId === token.envelopeId && field.recipientId === token.recipientId,
+	);
 	if (fields.length === 0) throw new SigningNoAssignedFieldsError();
-
-	const recipients = (
-		await db
-			.select()
-			.from(envelopeRecipients)
-			.where(eq(envelopeRecipients.envelopeId, token.envelopeId))
-			.limit(10)
-	).map((recipient) => RecipientSchema.parse(recipient));
+	const recipients = context.recipients;
 	const signingRecipient = recipients.find((recipient) => recipient.id === token.recipientId);
-	if (signingRecipient?.status === "completed") {
+	if (!signingRecipient) throw new SigningCompletionBlockedError("sent");
+	if (signingRecipient.status === "completed")
 		return resumeRecordedSigning(
 			token,
 			signature.fieldValue,
 			fields,
 			recipients,
+			context.saved,
 			options.documentsBucket,
+			options.now,
+			parsedEnvelope.createdBy,
+			signingRecipient.email,
 		);
-	}
+	if (signingRecipient.status !== "sent") throw new SigningCompletionBlockedError("sent");
 	const senderNotificationUrl = buildSenderSigningNotificationUrl(token.envelopeId);
-	const shouldNotifySender =
-		Boolean(signingRecipient) &&
-		!sameEmail(signingRecipient?.email ?? "", parsedEnvelope.createdBy);
-	if (shouldNotifySender && signingRecipient && options.emailDelivery) {
+	const shouldNotifySender = !sameEmail(signingRecipient.email, parsedEnvelope.createdBy);
+	if (shouldNotifySender && options.emailDelivery) {
 		await deliverTransactionalEmail(
 			buildSenderPartnerSignedEmail({
 				email: parsedEnvelope.createdBy,
@@ -116,20 +116,32 @@ export async function completeSigning(
 		);
 	}
 
-	await db
-		.insert(fieldValues)
-		.values(
+	const writes: SigningBatchQuery[] = [
+		signingStatement(sql`select id from envelopes where id = ${token.envelopeId} for update`),
+		signingStatement(sql`/* signing-record-guard */
+			with locked as (
+				select e.status as envelope_status, e.created_by, r.status as recipient_status, r.email,
+					t.status as token_status, t.verified_at, t.expires_at
+				from envelopes e join envelope_recipients r on r.envelope_id = e.id
+				join signer_tokens t on t.envelope_id = e.id and t.recipient_id = r.id
+				where e.id = ${token.envelopeId} and r.id = ${token.recipientId}
+					and t.id = ${token.id} and t.token = ${token.token}
+				for update of e, r, t
+			)
+			select 1 / case when exists (
+				select 1 from locked where envelope_status = 'sent' and recipient_status = 'sent' and created_by = ${parsedEnvelope.createdBy} and email = ${signingRecipient.email}
+					and ${noEnvelopeDeletion(token.envelopeId)} and token_status = 'active' and verified_at is not null
+					and expires_at > ${options.now ?? new Date()}
+			) then 1 else 0 end as allowed`),
+		db.insert(fieldValues).values(
 			fields.map((field) => ({
 				envelopeId: token.envelopeId,
 				recipientId: token.recipientId,
 				fieldId: field.id,
 				value: field.type === "signature" ? signature.fieldValue : signingDate,
 			})),
-		)
-		.returning();
-	await db
-		.insert(auditEvents)
-		.values([
+		),
+		db.insert(auditEvents).values([
 			{
 				envelopeId: token.envelopeId,
 				recipientId: token.recipientId,
@@ -142,41 +154,50 @@ export async function completeSigning(
 				eventType: "recipient.completed",
 				message: null,
 			},
-		])
-		.returning();
-	await db
-		.update(envelopeRecipients)
-		.set({ status: "completed" })
-		.where(eq(envelopeRecipients.id, token.recipientId));
-
-	if (input.rememberSignature && signingRecipient) {
-		await rememberPartnerSignaturePreference({
-			envelopeId: token.envelopeId,
-			email: signingRecipient.email,
-			signature,
-		});
-	}
+		]),
+		db
+			.update(envelopeRecipients)
+			.set({ status: "completed" })
+			.where(
+				and(
+					eq(envelopeRecipients.id, token.recipientId),
+					eq(envelopeRecipients.envelopeId, token.envelopeId),
+				),
+			),
+	];
+	if (input.rememberSignature)
+		writes.push(
+			rememberPartnerSignaturePreference({
+				envelopeId: token.envelopeId,
+				email: signingRecipient.email,
+				signature,
+			}),
+		);
 	const envelopeStatus = recipients.every(
 		(recipient) => recipient.id === token.recipientId || recipient.status === "completed",
 	)
 		? "completed"
 		: "sent";
-	if (shouldNotifySender) {
-		await db
-			.insert(emailSendRecords)
-			.values({
+	if (shouldNotifySender)
+		writes.push(
+			db.insert(emailSendRecords).values({
 				envelopeId: token.envelopeId,
 				recipientId: token.recipientId,
 				tokenId: token.id,
 				email: parsedEnvelope.createdBy,
 				kind: "partner_signed",
 				fallbackUrl: senderNotificationUrl,
-			})
-			.returning();
-	}
-	if (envelopeStatus === "completed") {
-		await finishEnvelopeArtifact(token.envelopeId, options.documentsBucket);
-	}
+			}),
+		);
+	await persistSigningCompletion(
+		token,
+		envelopeStatus,
+		writes,
+		options.documentsBucket,
+		options.now,
+		parsedEnvelope.createdBy,
+		signingRecipient.email,
+	);
 
 	return {
 		envelopeId: token.envelopeId,
@@ -186,21 +207,90 @@ export async function completeSigning(
 	};
 }
 
+async function persistSigningCompletion(
+	token: SignerToken,
+	envelopeStatus: "sent" | "completed",
+	writes: SigningBatchQuery[],
+	documentsBucket: R2Bucket | undefined,
+	now: Date | undefined,
+	owner: string,
+	recipientEmail: string,
+): Promise<void> {
+	try {
+		if (envelopeStatus === "completed") {
+			const snapshot = await getSigningFinalizationSnapshot(token.envelopeId, writes);
+			await finishEnvelopeArtifact(
+				token.envelopeId,
+				documentsBucket,
+				snapshot,
+				token,
+				now,
+				owner,
+				recipientEmail,
+			);
+		} else {
+			await signingBatch(writes);
+		}
+	} catch (error) {
+		if (isSigningGuardFailure(error)) throw new SigningCompletionBlockedError("sent");
+		throw error;
+	}
+}
+
+async function getSigningCompletionContext(token: SignerToken): Promise<SigningCompletionContext> {
+	const db = getDb();
+	const [envelopeRows, fieldRows, recipientRows, saved] = await signingBatch([
+		{
+			table: envelopes,
+			query: db.select().from(envelopes).where(eq(envelopes.id, token.envelopeId)).limit(1),
+		},
+		{
+			table: envelopeFields,
+			query: db
+				.select()
+				.from(envelopeFields)
+				.where(eq(envelopeFields.envelopeId, token.envelopeId))
+				.limit(100),
+		},
+		{
+			table: envelopeRecipients,
+			query: db
+				.select()
+				.from(envelopeRecipients)
+				.where(eq(envelopeRecipients.envelopeId, token.envelopeId))
+				.limit(10),
+		},
+		{
+			table: fieldValues,
+			query: db
+				.select()
+				.from(fieldValues)
+				.where(eq(fieldValues.recipientId, token.recipientId))
+				.limit(100),
+		},
+	]);
+	return {
+		envelope: EnvelopeSchema.parse(envelopeRows?.[0]),
+		fields: (fieldRows ?? []).map((row) => EnvelopeFieldSchema.parse(row)),
+		recipients: (recipientRows ?? []).map((row) => RecipientSchema.parse(row)),
+		saved: saved ?? [],
+	};
+}
+
 async function resumeRecordedSigning(
 	token: SignerToken,
 	signatureValue: string,
 	fields: EnvelopeField[],
 	recipients: Recipient[],
+	saved: Array<Record<string, unknown>>,
 	documentsBucket?: R2Bucket,
+	now?: Date,
+	owner?: string,
+	recipientEmail?: string,
 ): Promise<CompleteSigningResult> {
 	if (!recipients.every((recipient) => recipient.status === "completed")) {
 		throw new SigningCompletionBlockedError("sent");
 	}
-	const saved = await getDb()
-		.select()
-		.from(fieldValues)
-		.where(eq(fieldValues.recipientId, token.recipientId))
-		.limit(100);
 	const savedByField = new Map(saved.map((value) => [value.fieldId, value.value]));
 	if (
 		fields.some(
@@ -211,7 +301,15 @@ async function resumeRecordedSigning(
 	) {
 		throw new SigningCompletionBlockedError("sent");
 	}
-	await finishEnvelopeArtifact(token.envelopeId, documentsBucket);
+	await finishEnvelopeArtifact(
+		token.envelopeId,
+		documentsBucket,
+		undefined,
+		token,
+		now,
+		owner,
+		recipientEmail,
+	);
 	return {
 		envelopeId: token.envelopeId,
 		recipientId: token.recipientId,
@@ -223,16 +321,24 @@ async function resumeRecordedSigning(
 async function finishEnvelopeArtifact(
 	envelopeId: string,
 	documentsBucket?: R2Bucket,
+	snapshot?: Awaited<ReturnType<typeof getSigningFinalizationSnapshot>>,
+	token?: SignerToken,
+	now?: Date,
+	owner?: string,
+	recipientEmail?: string,
 ): Promise<void> {
 	try {
-		const document = await finalizeCompletedEnvelope(envelopeId, { documentsBucket });
+		const document = await finalizeCompletedEnvelope(envelopeId, {
+			documentsBucket,
+			snapshot,
+			completion: token ? { token, now: now ?? new Date(), owner, recipientEmail } : undefined,
+		});
 		if (!document) throw new SigningFinalizationError();
 	} catch {
 		// Recipient values stay durable, but the envelope remains open. An identical
 		// retry resumes artifact creation without replacing the recorded signature.
 		throw new SigningFinalizationError();
 	}
-	await getDb().update(envelopes).set({ status: "completed" }).where(eq(envelopes.id, envelopeId));
 }
 
 type NormalizedSigningSignature =
@@ -281,13 +387,12 @@ function legacyTypedSigningSignature(signatureName: string | undefined): Complet
 	};
 }
 
-async function rememberPartnerSignaturePreference(input: {
+function rememberPartnerSignaturePreference(input: {
 	envelopeId: string;
 	email: string;
 	signature: NormalizedSigningSignature;
-}): Promise<void> {
-	const db = getDb();
-	await db
+}): SigningBatchQuery {
+	return getDb()
 		.insert(signatureProfiles)
 		.values(
 			input.signature.kind === "typed"
@@ -311,8 +416,7 @@ async function rememberPartnerSignaturePreference(input: {
 						typedFont: null,
 						selected: true,
 					},
-		)
-		.returning();
+		);
 }
 
 function buildSenderSigningNotificationUrl(envelopeId: string): string {

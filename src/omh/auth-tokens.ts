@@ -1,11 +1,13 @@
+import { and, eq } from "drizzle-orm";
+import { generateAgenticToken, revokeAgenticToken } from "@/db/agentic-access";
+import { hashAgenticCredential, normalizeAgenticEmail } from "@/db/agentic-access/request";
 import {
-	createAgenticManagementSessionFromVerifiedIdentity,
-	generateAgenticToken,
-	resolveAgenticManagementSession,
-	revokeAgenticManagementSession,
-	revokeAgenticToken,
-} from "@/db/agentic-access";
+	agenticAccessLinks,
+	agenticManagementSessions,
+	agenticSecurityEvents,
+} from "@/db/agentic-access/table";
 import type { VerifiedHistorySession } from "@/db/history-access";
+import { getDb } from "@/db/setup";
 
 export async function createAdminApiToken(
 	session: VerifiedHistorySession,
@@ -13,7 +15,13 @@ export async function createAdminApiToken(
 	requestIp?: string,
 ): Promise<Awaited<ReturnType<typeof generateAgenticToken>>> {
 	return withManagementSession(session, requestIp, (managementSession) =>
-		generateAgenticToken({ session: managementSession, name, requestIp }),
+		generateAgenticToken({
+			session: managementSession,
+			name,
+			requestIp,
+			// Leave room for cookie authorization, the bridge and guaranteed cleanup.
+			maximumAttempts: 3,
+		}),
 	);
 }
 
@@ -32,16 +40,62 @@ async function withManagementSession<T>(
 	requestIp: string | undefined,
 	action: (session: { id: string; email: string; expiresAt: Date }) => Promise<T>,
 ): Promise<T> {
-	const bridge = await createAgenticManagementSessionFromVerifiedIdentity({
-		email: session.email,
-		requestIp,
-	});
+	const db = getDb();
+	const email = normalizeAgenticEmail(session.email);
+	const now = new Date();
+	const linkId = crypto.randomUUID();
+	const sessionId = crypto.randomUUID();
+	const expiresAt = new Date(Math.min(now.getTime() + 15 * 60 * 1000, session.expiresAt.getTime()));
+	const [credentialHash, sessionHash] = await Promise.all([
+		hashAgenticCredential(crypto.randomUUID()),
+		hashAgenticCredential(crypto.randomUUID()),
+	]);
+	const audit = { linkId, sessionId, email, actorType: "browser", requestIp: requestIp ?? null };
+	// Preselected IDs keep the identity bridge, its real session FK and its audit atomic.
+	const results = await db.batch([
+		db.insert(agenticAccessLinks).values({
+			id: linkId,
+			email,
+			credentialHash,
+			status: "consumed",
+			expiresAt: now,
+			activatedAt: now,
+			consumedAt: now,
+		}),
+		db
+			.insert(agenticManagementSessions)
+			.values({ id: sessionId, linkId, email, sessionHash, status: "active", expiresAt })
+			.returning(),
+		db.insert(agenticSecurityEvents).values({ ...audit, eventType: "agentic.session.bridged" }),
+	]);
 	try {
-		const verified = await resolveAgenticManagementSession(bridge.rawSession);
-		if (verified.state !== "active")
+		const inserted = results[1]?.rows[0];
+		if (
+			inserted?.id !== sessionId ||
+			inserted.email !== email ||
+			inserted.status !== "active" ||
+			new Date(
+				inserted.expires_at instanceof Date
+					? inserted.expires_at.getTime()
+					: String(inserted.expires_at),
+			).getTime() !== expiresAt.getTime()
+		) {
 			throw new Error("Token management session could not be created");
-		return await action(verified.session);
+		}
+		return await action({ id: sessionId, email, expiresAt });
 	} finally {
-		await revokeAgenticManagementSession(bridge.rawSession);
+		await db.batch([
+			db
+				.update(agenticManagementSessions)
+				.set({ status: "revoked" })
+				.where(
+					and(
+						eq(agenticManagementSessions.id, sessionId),
+						eq(agenticManagementSessions.email, email),
+						eq(agenticManagementSessions.status, "active"),
+					),
+				),
+			db.insert(agenticSecurityEvents).values({ ...audit, eventType: "agentic.session.revoked" }),
+		]);
 	}
 }

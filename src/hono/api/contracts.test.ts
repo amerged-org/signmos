@@ -1,8 +1,11 @@
 import { PDFDocument } from "pdf-lib";
 import { hashAgenticCredential } from "@/db/agentic-access/request";
 import { agenticApiTokens, agenticCommandRecords } from "@/db/agentic-access/table";
+import { envelopeArtifactVersions } from "@/db/envelope/artifact-versions";
 import { MAX_SOURCE_PDF_BYTES } from "@/db/envelope/pdf-policy-limits";
 import {
+	auditEvents,
+	emailSendRecords,
 	envelopeFields,
 	envelopeRecipients,
 	envelopes,
@@ -68,6 +71,7 @@ function read(path = "/", authorization = `Bearer ${token}`) {
 describe("owner contract API", () => {
 	beforeEach(async () => {
 		state.rows = new Map();
+		state.queryCalls = 0;
 		state.objects.clear();
 		fetcher.mockClear();
 		fetcher.mockImplementation(async () => Response.json({ id: "email-1" }));
@@ -102,7 +106,18 @@ describe("owner contract API", () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	it("uploads, prepares and sends one external contract without signing for the owner", async () => {
+		fetcher.mockImplementation(async () => {
+			expect(firstRow(envelopes).status).toBe("draft");
+			expect(firstRow(signerTokens).status).toBe("revoked");
+			expect(firstRow(agenticCommandRecords)).toMatchObject({
+				state: "pending",
+				documentId: firstRow(envelopes).id,
+			});
+			expect(firstRow(envelopeArtifactVersions).r2Key).toBe(firstRow(sourceDocuments).r2Key);
+			return Response.json({ id: "email-1" });
+		});
 		const response = await send();
+		expect(state.queryCalls).toBeLessThanOrEqual(6);
 		expect(response.status).toBe(201);
 		expect(response.headers.get("cache-control")).toBe("private, no-store");
 		const body = await response.json();
@@ -122,6 +137,13 @@ describe("owner contract API", () => {
 		expect(contractRows(envelopeRecipients)).toHaveLength(1);
 		expect(contractRows(envelopeFields).map((row) => row.type)).toEqual(["signature", "date"]);
 		expect(contractRows(signerTokens)).toHaveLength(1);
+		expect(firstRow(signerTokens).status).toBe("active");
+		expect(firstRow(agenticCommandRecords)).toMatchObject({
+			state: "completed",
+			documentId: firstRow(envelopes).id,
+			responseStatus: 201,
+			responseBody: JSON.stringify(body),
+		});
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		const emailRequest = fetcher.mock.calls[0];
 		expect(JSON.stringify(emailRequest)).toContain(
@@ -209,6 +231,51 @@ describe("owner contract API", () => {
 		expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
 	});
 
+	it("denies an owner PDF response when deletion starts during the private file read", async () => {
+		await send();
+		const id = String(firstRow(envelopes).id);
+		firstRow(envelopes).status = "completed";
+		const key = `envelopes/${id}/final/retained.pdf`;
+		state.objects.set(key, new TextEncoder().encode("%PDF-deletion-fixture"));
+		contractRows(finalDocuments).push({
+			id: crypto.randomUUID(),
+			envelopeId: id,
+			r2Key: key,
+			createdAt: state.now,
+		});
+		const bucket = contractsTestBucket();
+		const get = bucket.get.bind(bucket);
+		vi.spyOn(bucket, "get").mockImplementation(async (file: string) => {
+			contractRows(auditEvents).push({
+				envelopeId: id,
+				eventType: "envelope.deletion_started",
+				createdAt: state.now,
+			});
+			return get(file);
+		});
+		env.DOCUMENTS_BUCKET = bucket;
+		expect((await read(`/${id}/pdf`)).status).toBe(404);
+	});
+
+	it("keeps contract reads within four RPCs and PDF readback within five including Bearer authentication", async () => {
+		await send();
+		const id = String(firstRow(envelopes).id);
+		firstRow(envelopes).status = "completed";
+		const key = `envelopes/${id}/final/immutable.pdf`;
+		state.objects.set(key, new TextEncoder().encode("%PDF-budget-fixture"));
+		contractRows(finalDocuments).push({
+			id: crypto.randomUUID(),
+			envelopeId: id,
+			r2Key: key,
+			createdAt: state.now,
+		});
+		for (const path of ["/", `/${id}`, `/${id}/pdf`]) {
+			state.queryCalls = 0;
+			expect((await read(path)).status).toBe(200);
+			expect(state.queryCalls, path).toBeLessThanOrEqual(path.endsWith("/pdf") ? 5 : 4);
+		}
+	});
+
 	it("supports CSRF-protected cookie requests with durable browser idempotency", async () => {
 		const session = crypto.randomUUID();
 		contractRows(historySessions).push({
@@ -257,6 +324,40 @@ describe("owner contract API", () => {
 		expect(failed.status).toBe(502);
 		expect((await send()).status).toBe(502);
 		expect(fetcher).toHaveBeenCalledTimes(1);
+		expect(firstRow(envelopes).status).toBe("draft");
+		expect(firstRow(signerTokens).status).toBe("revoked");
+		expect(
+			contractRows(agenticCommandRecords).find((row) => row.responseStatus === 502)?.documentId,
+		).toBe(firstRow(envelopes).id);
+	});
+
+	it("never activates an invitation after the draft owner, status or durable claim changes during delivery", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		try {
+			for (const change of ["owner", "status", "claim"] as const) {
+				fetcher.mockImplementation(async () => {
+					if (change === "owner") firstRow(envelopes).createdBy = "other-owner@amerged.com";
+					if (change === "status") firstRow(envelopes).status = "expired";
+					if (change === "claim") firstRow(agenticCommandRecords).state = "completed";
+					return Response.json({ id: "email-1" });
+				});
+				expect((await send(payload, `race-${change}`)).status).toBe(500);
+				expect(firstRow(signerTokens).status).toBe("revoked");
+				expect(contractRows(emailSendRecords)).toHaveLength(0);
+				for (const table of [
+					envelopes,
+					sourceDocuments,
+					envelopeFields,
+					envelopeRecipients,
+					signerTokens,
+					envelopeArtifactVersions,
+					agenticCommandRecords,
+				])
+					state.rows.delete(table);
+			}
+		} finally {
+			logged.mockRestore();
+		}
 	});
 
 	it("rejects PDFs above 2 MiB and more than 20 fields before creating a draft", async () => {

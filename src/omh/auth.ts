@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type AgenticPrincipal, authenticateAgenticBearer } from "@/db/agentic-access";
 import { resolveHistorySessionState, type VerifiedHistorySession } from "@/db/history-access";
 
@@ -16,6 +17,68 @@ export interface AdminPrincipal {
 export type AdminAuthorization =
 	| { ok: true; principal: AdminPrincipal }
 	| { ok: false; response: Response };
+
+interface VerifiedAdminRequest {
+	kind: "bearer" | "session";
+	credential: string;
+	ip: string;
+	principal: AdminPrincipal;
+}
+
+interface AdminRequestScope {
+	active: boolean;
+	verified: WeakMap<Request, VerifiedAdminRequest>;
+}
+
+const adminRequestContext = new AsyncLocalStorage<AdminRequestScope>();
+
+/** Reuse verified identity only until this HTTP request finishes. */
+export function withAdminRequestScope<Result>(run: () => Promise<Result>): Promise<Result> {
+	const scope: AdminRequestScope = { active: true, verified: new WeakMap() };
+	return adminRequestContext.run(scope, async () => {
+		try {
+			return await run();
+		} finally {
+			scope.active = false;
+		}
+	});
+}
+
+/** Carry the gate's verified identity to its exact sanitized dispatch request. */
+export function rememberVerifiedAdminRequest(
+	verifiedRequest: Request,
+	forwardedRequest: Request,
+): void {
+	const scope = adminRequestContext.getStore();
+	const verified = scope?.active ? scope.verified.get(verifiedRequest) : undefined;
+	if (verified) scope?.verified.set(forwardedRequest, verified);
+}
+
+function cachedPrincipal(
+	request: Request,
+	kind: VerifiedAdminRequest["kind"],
+	credential: string,
+): AdminPrincipal | undefined {
+	const scope = adminRequestContext.getStore();
+	const verified = scope?.active ? scope.verified.get(request) : undefined;
+	return verified?.kind === kind &&
+		verified.credential === credential &&
+		verified.ip === requestIp(request)
+		? verified.principal
+		: undefined;
+}
+
+function authorized(
+	request: Request,
+	kind: VerifiedAdminRequest["kind"],
+	credential: string,
+	principal: AdminPrincipal,
+): AdminAuthorization {
+	const scope = adminRequestContext.getStore();
+	if (scope?.active)
+		scope.verified.set(request, { kind, credential, ip: requestIp(request), principal });
+	return { ok: true, principal };
+}
 
 export function isAllowedAdmin(email: string, env: AdminAuthEnv): boolean {
 	const normalized = email.trim().toLowerCase();
@@ -62,17 +125,22 @@ export async function resolveAdminRequest(
 		return denied("ADMIN_NOT_CONFIGURED", "Administrator access is not configured", 503);
 	const authorization = request.headers.get("authorization");
 	if (authorization && options.allowBearer) {
-		const agent = await authenticateAgenticBearer({ authorization, requestIp: requestIp(request) });
+		const agent =
+			cachedPrincipal(request, "bearer", authorization)?.agent ??
+			(await authenticateAgenticBearer({ authorization, requestIp: requestIp(request) }));
 		if (!agent || !isAllowedAdmin(agent.email, env))
 			return denied("ADMIN_ACCESS_DENIED", "Administrator access required", 403);
-		return { ok: true, principal: { email: agent.email.trim().toLowerCase(), agent } };
+		return authorized(request, "bearer", authorization, {
+			email: agent.email.trim().toLowerCase(),
+			agent,
+		});
 	}
 	if (options.requireBearer)
 		return denied("API_TOKEN_REQUIRED", "A valid Bearer API token is required", 403);
 	const rawSession = readAdminSessionCookie(request);
 	if (!rawSession) return denied("ADMIN_SESSION_REQUIRED", "Sign in to continue", 403);
-	const state = await resolveHistorySessionState(rawSession, new Date(), requestIp(request));
-	if (state.state !== "active" || !isAllowedAdmin(state.session.email, env))
+	const session = await resolveAdminSession(request, rawSession);
+	if (!session || !isAllowedAdmin(session.email, env))
 		return denied("ADMIN_ACCESS_DENIED", "Sign in with an authorized email", 403);
 	const requiresCsrf = options.requireCsrf ?? !["GET", "HEAD", "OPTIONS"].includes(request.method);
 	if (
@@ -82,10 +150,21 @@ export async function resolveAdminRequest(
 	) {
 		return denied("CSRF_REJECTED", "Refresh this page and try again", 403);
 	}
-	return {
-		ok: true,
-		principal: { email: state.session.email.trim().toLowerCase(), session: state.session },
-	};
+	return authorized(request, "session", rawSession, {
+		email: session.email.trim().toLowerCase(),
+		session,
+	});
+}
+
+async function resolveAdminSession(
+	request: Request,
+	rawSession: string,
+): Promise<VerifiedHistorySession | null> {
+	const now = new Date();
+	const cached = cachedPrincipal(request, "session", rawSession)?.session;
+	if (cached && cached.expiresAt > now) return cached;
+	const state = await resolveHistorySessionState(rawSession, now, requestIp(request));
+	return state.state === "active" ? state.session : null;
 }
 
 export function requestIp(request: Request): string {

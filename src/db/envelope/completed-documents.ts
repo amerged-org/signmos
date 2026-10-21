@@ -1,5 +1,9 @@
-import { eq } from "drizzle-orm";
+import { eq, getTableColumns, sql } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import {
+	finalizationSnapshotProjection,
+	parseFinalizationSnapshotProjection,
+} from "./finalization";
 import {
 	type EnvelopeField,
 	EnvelopeFieldSchema,
@@ -10,6 +14,7 @@ import {
 	RecipientSchema,
 	SignerTokenSchema,
 } from "./schema";
+import { noEnvelopeDeletion, signingBatch } from "./signing-batch";
 import {
 	auditEvents,
 	envelopeFields,
@@ -117,8 +122,29 @@ export async function getFinalDocumentByToken(
 	token: string,
 	options: { now?: Date } = {},
 ): Promise<FinalDocument | null> {
-	const context = await getCompletedDocumentContext(token, options);
-	return context?.finalDocument ?? null;
+	return (await getFinalDocumentDownloadContext(token, options))?.document ?? null;
+}
+
+export async function getFinalDocumentDownloadContext(token: string, options: { now?: Date } = {}) {
+	const db = getDb();
+	const [row] = await db
+		.select({
+			...getTableColumns(finalDocuments),
+			finalizationData: finalizationSnapshotProjection(sql`final_documents.envelope_id`),
+		})
+		.from(finalDocuments)
+		.where(sql`${noEnvelopeDeletion(sql`final_documents.envelope_id`)}
+		and exists (select 1 from envelopes e where e.id = final_documents.envelope_id and e.status = 'completed')
+		and (final_documents.id::text = ${token} or exists (select 1 from signer_tokens t where t.envelope_id = final_documents.envelope_id and t.token = ${token} and t.status = 'active' and t.expires_at > ${options.now ?? new Date()}))`)
+		.limit(1);
+	if (!row) return null;
+	const document = FinalDocumentSchema.parse(row);
+	return {
+		document,
+		snapshot: parseFinalizationSnapshotProjection(row.finalizationData),
+		access: sql`${noEnvelopeDeletion(document.envelopeId)} and exists (select 1 from envelopes e where e.id = ${document.envelopeId} and e.status = 'completed')
+			and (${document.id ?? null}::text = ${token} or exists (select 1 from signer_tokens t where t.envelope_id = ${document.envelopeId} and t.token = ${token} and t.status = 'active' and t.expires_at > ${options.now ?? new Date()}))`,
+	};
 }
 
 export async function getCompletedDocumentLinkForSignerToken(
@@ -126,34 +152,43 @@ export async function getCompletedDocumentLinkForSignerToken(
 	options: { now?: Date } = {},
 ): Promise<CompletedDocumentLink | null> {
 	const db = getDb();
-	const tokenRows = await db
-		.select()
-		.from(signerTokens)
-		.where(eq(signerTokens.token, tokenValue))
-		.limit(1);
+	const [tokenRows = []] = await signingBatch([
+		{
+			table: signerTokens,
+			query: db.select().from(signerTokens).where(eq(signerTokens.token, tokenValue)).limit(1),
+		},
+	]);
 	const token =
 		tokenRows.map((row) => SignerTokenSchema.parse(row)).find((row) => row.token === tokenValue) ??
 		null;
-	if (!token) return null;
-	if (token.expiresAt <= (options.now ?? new Date())) return null;
-
-	const [envelopeRow] = await db
-		.select()
-		.from(envelopes)
-		.where(eq(envelopes.id, token.envelopeId))
-		.limit(1);
-	const envelope = envelopeRow ? EnvelopeSchema.parse(envelopeRow) : null;
-	if (envelope?.status !== "completed") return null;
-
-	const documentRows = await db
-		.select()
-		.from(finalDocuments)
-		.where(eq(finalDocuments.envelopeId, token.envelopeId))
-		.limit(1);
+	if (!token || token.status !== "active" || token.expiresAt <= (options.now ?? new Date()))
+		return null;
+	const [envelopeRows = [], documents = []] = await signingBatch([
+		{
+			table: envelopes,
+			query: db
+				.select()
+				.from(envelopes)
+				.where(
+					sql`${envelopes.id} = ${token.envelopeId} and ${noEnvelopeDeletion(token.envelopeId)}`,
+				)
+				.limit(1),
+		},
+		{
+			table: finalDocuments,
+			query: db
+				.select()
+				.from(finalDocuments)
+				.where(eq(finalDocuments.envelopeId, token.envelopeId))
+				.limit(1),
+		},
+	]);
+	if (!envelopeRows[0] || EnvelopeSchema.parse(envelopeRows[0]).status !== "completed") return null;
 	const finalDocument =
-		documentRows
+		documents
 			.map((row) => FinalDocumentSchema.parse(row))
 			.find((document) => document.envelopeId === token.envelopeId && document.id) ?? null;
+
 	if (!finalDocument?.id) return null;
 	return completedDocumentLink(token.token);
 }
@@ -173,89 +208,91 @@ async function getCompletedDocumentContext(
 	token: string,
 	options: { now?: Date } = {},
 ): Promise<CompletedDocumentContext | null> {
-	const signerContext = await getCompletedDocumentContextForSignerToken(token, options);
-	if (signerContext) return signerContext;
-
 	const db = getDb();
-	const documentRows = await db
-		.select()
-		.from(finalDocuments)
-		.where(eq(finalDocuments.id, token))
-		.limit(1);
-	const finalDocument =
-		documentRows
-			.map((row) => FinalDocumentSchema.parse(row))
-			.find((document) => document.id === token) ?? null;
+	const [tokenRows = [], directDocuments = []] = await signingBatch([
+		{
+			table: signerTokens,
+			query: db.select().from(signerTokens).where(eq(signerTokens.token, token)).limit(1),
+		},
+		{
+			table: finalDocuments,
+			query: db
+				.select()
+				.from(finalDocuments)
+				.where(sql`${finalDocuments.id}::text = ${token}`)
+				.limit(1),
+		},
+	]);
+	const signer = tokenRows
+		.map((row) => SignerTokenSchema.parse(row))
+		.find((row) => row.token === token);
+	if (signer && (signer.status !== "active" || signer.expiresAt <= (options.now ?? new Date())))
+		return null;
+	const direct = directDocuments
+		.map((row) => FinalDocumentSchema.parse(row))
+		.find((row) => row.id === token);
+	const envelopeId = signer?.envelopeId ?? direct?.envelopeId;
+	if (!envelopeId) return null;
+	const [
+		envelopeRows = [],
+		documents = [],
+		recipientRows = [],
+		fieldRows = [],
+		valueRows = [],
+		events = [],
+	] = await signingBatch([
+		{
+			table: envelopes,
+			query: db
+				.select()
+				.from(envelopes)
+				.where(sql`${envelopes.id} = ${envelopeId} and ${noEnvelopeDeletion(envelopeId)}`)
+				.limit(1),
+		},
+		{
+			table: finalDocuments,
+			query: db
+				.select()
+				.from(finalDocuments)
+				.where(eq(finalDocuments.envelopeId, envelopeId))
+				.limit(1),
+		},
+		{
+			table: envelopeRecipients,
+			query: db
+				.select()
+				.from(envelopeRecipients)
+				.where(eq(envelopeRecipients.envelopeId, envelopeId))
+				.limit(100),
+		},
+		{
+			table: envelopeFields,
+			query: db
+				.select()
+				.from(envelopeFields)
+				.where(eq(envelopeFields.envelopeId, envelopeId))
+				.limit(100),
+		},
+		{
+			table: fieldValues,
+			query: db.select().from(fieldValues).where(eq(fieldValues.envelopeId, envelopeId)).limit(100),
+		},
+		{
+			table: auditEvents,
+			query: db.select().from(auditEvents).where(eq(auditEvents.envelopeId, envelopeId)).limit(100),
+		},
+	]);
+	if (!envelopeRows[0] || EnvelopeSchema.parse(envelopeRows[0]).status !== "completed") return null;
+	const finalDocument = documents
+		.map((row) => FinalDocumentSchema.parse(row))
+		.find((row) => row.envelopeId === envelopeId);
 	if (!finalDocument) return null;
-
-	const [envelopeRow] = await db
-		.select()
-		.from(envelopes)
-		.where(eq(envelopes.id, finalDocument.envelopeId))
-		.limit(1);
-	const envelope = envelopeRow ? EnvelopeSchema.parse(envelopeRow) : null;
-	if (envelope?.status !== "completed") return null;
-
-	const recipients = (
-		await db
-			.select()
-			.from(envelopeRecipients)
-			.where(eq(envelopeRecipients.envelopeId, finalDocument.envelopeId))
-			.limit(100)
-	).map((recipient) => RecipientSchema.parse(recipient));
-	const fields = (
-		await db
-			.select()
-			.from(envelopeFields)
-			.where(eq(envelopeFields.envelopeId, finalDocument.envelopeId))
-			.limit(100)
-	).map((field) => EnvelopeFieldSchema.parse(field));
-	const values = (
-		await db
-			.select()
-			.from(fieldValues)
-			.where(eq(fieldValues.envelopeId, finalDocument.envelopeId))
-			.limit(100)
-	)
-		.map((value) => normalizeFieldValue(value as Record<string, unknown>))
+	const recipients = recipientRows.map((row) => RecipientSchema.parse(row));
+	const fields = fieldRows.map((row) => EnvelopeFieldSchema.parse(row));
+	const values = valueRows
+		.map(normalizeFieldValue)
 		.filter((value): value is FieldValueSnapshot => Boolean(value));
-	const events = await db
-		.select()
-		.from(auditEvents)
-		.where(eq(auditEvents.envelopeId, finalDocument.envelopeId))
-		.limit(100);
-
 	return { finalDocument, recipients, fields, values, events };
-}
-
-async function getCompletedDocumentContextForSignerToken(
-	tokenValue: string,
-	options: { now?: Date },
-): Promise<CompletedDocumentContext | null> {
-	const db = getDb();
-	const tokenRows = await db
-		.select()
-		.from(signerTokens)
-		.where(eq(signerTokens.token, tokenValue))
-		.limit(1);
-	const token =
-		tokenRows.map((row) => SignerTokenSchema.parse(row)).find((row) => row.token === tokenValue) ??
-		null;
-	if (!token) return null;
-	if (token.expiresAt <= (options.now ?? new Date())) return null;
-	const documentRows = await db
-		.select()
-		.from(finalDocuments)
-		.where(eq(finalDocuments.envelopeId, token.envelopeId))
-		.limit(1);
-	const finalDocument =
-		documentRows
-			.map((row) => FinalDocumentSchema.parse(row))
-			.find((document) => document.envelopeId === token.envelopeId) ?? null;
-	if (!finalDocument?.id) return null;
-	const context = await getCompletedDocumentContext(finalDocument.id, options);
-	if (!context) return null;
-	return context;
 }
 
 function buildParties(context: CompletedDocumentContext | null) {

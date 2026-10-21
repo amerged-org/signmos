@@ -73,35 +73,42 @@ function insertFinalDocuments(rows: Array<Record<string, unknown>>) {
 	return inserted;
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: { status?: string }) => ({
-				where: async () => {
-					if (table === state.recipientsTable) {
-						state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
-					}
-					if (table === state.envelopesTable) {
-						state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
-					}
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: { status?: string }) => ({
+							where: async () => {
+								if (table === state.recipientsTable) {
+									state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
+								}
+								if (table === state.envelopesTable) {
+									state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
+								}
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("self-sign completion detail links", () => {
 	beforeEach(() => {

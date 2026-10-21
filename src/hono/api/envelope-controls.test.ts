@@ -96,27 +96,34 @@ function updateRows(table: unknown, value: Record<string, unknown>) {
 	return [];
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: Record<string, unknown>) => ({
-				where: async () => updateRows(table, value),
-			}),
-		}),
-	}),
-}));
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: Record<string, unknown>) => ({
+							where: async () => updateRows(table, value),
+						}),
+					}),
+				},
+				selectRows,
+			),
+	};
+});
 
 describe("envelope controls", () => {
 	beforeEach(() => {
@@ -234,6 +241,10 @@ describe("envelope controls", () => {
 			"envelopes/00000000-0000-4000-8000-000000000001/final.pdf",
 		]);
 		expect(state.auditEvents).toEqual([
+			expect.objectContaining({
+				eventType: "envelope.deletion_started",
+				message: "sender@example.com",
+			}),
 			expect.objectContaining({
 				eventType: "envelope.deleted",
 				message: "sender@example.com",

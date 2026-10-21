@@ -12,13 +12,14 @@ import {
 	createAdminCsrfToken,
 	isAllowedAdmin,
 	resolveAdminRequest,
+	withAdminRequestScope,
 } from "./auth";
 import { authorizeHostedRequest } from "./auth-gate";
 import { redeemAdminLogin } from "./auth-login";
 import authEndpoint from "./auth-routes";
 
 type StoredRow = Record<string, unknown>;
-const state = vi.hoisted(() => ({ tables: new Map<unknown, StoredRow[]>() }));
+const state = vi.hoisted(() => ({ tables: new Map<unknown, StoredRow[]>(), queries: 0 }));
 
 function valuesIn(condition: unknown): string[] {
 	if (!condition || typeof condition !== "object") return [];
@@ -39,6 +40,7 @@ vi.mock("@/db/setup", () => ({
 		select: () => ({
 			from: (table: unknown) => ({
 				where: (condition: unknown) => {
+					state.queries++;
 					const rows = matchingRows(table, condition);
 					return Object.assign(Promise.resolve(rows), {
 						limit: async (count: number) => rows.slice(0, count),
@@ -50,6 +52,7 @@ vi.mock("@/db/setup", () => ({
 			set: (values: StoredRow) => ({
 				where: (condition: unknown) => ({
 					returning: async () => {
+						state.queries++;
 						const rows = matchingRows(table, condition);
 						for (const row of rows) Object.assign(row, values);
 						return rows;
@@ -60,6 +63,7 @@ vi.mock("@/db/setup", () => ({
 		insert: (table: unknown) => ({
 			values: (values: StoredRow) => ({
 				returning: async () => {
+					state.queries++;
 					const row = { id: crypto.randomUUID(), createdAt: new Date(), ...values };
 					const rows = state.tables.get(table) ?? [];
 					rows.push(row);
@@ -78,6 +82,7 @@ describe("amerged Sign administrator boundary", () => {
 	const envelopeId = "a0000000-0000-4000-8000-000000000001";
 
 	beforeEach(async () => {
+		state.queries = 0;
 		state.tables = new Map<unknown, StoredRow[]>([
 			[
 				historySessions,
@@ -257,6 +262,117 @@ describe("amerged Sign administrator boundary", () => {
 			env,
 		);
 		expect("request" in recipient && recipient.request.headers.has("x-now")).toBe(false);
+	});
+
+	it("authenticates the gate and exact forwarded handler request once per HTTP scope", async () => {
+		const incoming = request("/api/contracts", {
+			headers: { authorization: `Bearer ${rawToken}` },
+		});
+		let resume: (() => void) | undefined;
+		const resumeAfterResponse = new Promise<void>((resolve) => {
+			resume = resolve;
+		});
+		let afterResponse: Promise<unknown> | undefined;
+		const forwarded = await withAdminRequestScope(async () => {
+			const gate = await authorizeHostedRequest(incoming, env);
+			if (!("request" in gate)) throw new Error("expected authorized gate");
+			for (let attempt = 0; attempt < 2; attempt++) {
+				const auth = await resolveAdminRequest(gate.request, env, { allowBearer: true });
+				expect(auth.ok && auth.principal.email).toBe("owner@amerged.com");
+			}
+			expect(state.queries).toBe(3);
+			expect(state.tables.get(agenticSecurityEvents)).toHaveLength(1);
+			await resolveAdminRequest(new Request(gate.request), env, { allowBearer: true });
+			expect(state.queries).toBe(6);
+			afterResponse = resumeAfterResponse.then(() =>
+				resolveAdminRequest(gate.request, env, { allowBearer: true }),
+			);
+			return gate.request;
+		});
+		resume?.();
+		await afterResponse;
+		expect(state.queries).toBe(9);
+		await withAdminRequestScope(() => resolveAdminRequest(forwarded, env, { allowBearer: true }));
+		expect(state.queries).toBe(12);
+		expect(state.tables.get(agenticSecurityEvents)).toHaveLength(4);
+	});
+
+	it("keeps concurrent request principals isolated without caching failed credentials", async () => {
+		const secondToken = "signmos_valid_long_other_bearer_token";
+		state.tables.get(agenticApiTokens)?.push({
+			id: "other-token",
+			email: "other@amerged.com",
+			name: "Second integration",
+			tokenHash: await hashAgenticCredential(secondToken),
+			tokenHint: "signmos_…ther",
+			status: "active",
+			createdAt: new Date(),
+		});
+		const emails = await Promise.all(
+			[rawToken, secondToken].map((token) =>
+				withAdminRequestScope(async () => {
+					const incoming = request("/api/contracts", {
+						headers: { authorization: "Bearer invalid" },
+					});
+					expect((await resolveAdminRequest(incoming, env, { allowBearer: true })).ok).toBe(false);
+					incoming.headers.set("authorization", `Bearer ${token}`);
+					expect((await resolveAdminRequest(incoming, env, { allowBearer: true })).ok).toBe(true);
+					await Promise.resolve();
+					const auth = await resolveAdminRequest(incoming, env, { allowBearer: true });
+					return auth.ok ? auth.principal.email : "denied";
+				}),
+			),
+		);
+		expect(emails).toEqual(["owner@amerged.com", "other@amerged.com"]);
+		expect(state.queries).toBe(6);
+		expect(state.tables.get(agenticSecurityEvents)).toHaveLength(2);
+	});
+
+	it("rechecks current allowlist, credential class, credentials and CSRF before scoped reuse", async () => {
+		await withAdminRequestScope(async () => {
+			const bearer = request("/api/contracts", {
+				headers: { authorization: `Bearer ${rawToken}` },
+			});
+			expect((await resolveAdminRequest(bearer, env, { allowBearer: true })).ok).toBe(true);
+			expect((await resolveAdminRequest(bearer, env)).ok).toBe(false);
+			expect((await resolveAdminRequest(bearer, env, { requireBearer: true })).ok).toBe(false);
+			expect(
+				(
+					await resolveAdminRequest(
+						bearer,
+						{ SIGN_ADMIN_EMAILS: "other@amerged.com" },
+						{ allowBearer: true },
+					)
+				).ok,
+			).toBe(false);
+			expect((await resolveAdminRequest(bearer, {}, { allowBearer: true })).ok).toBe(false);
+			bearer.headers.set("authorization", "Bearer invalid");
+			expect((await resolveAdminRequest(bearer, env, { allowBearer: true })).ok).toBe(false);
+			const browser = request("/api/contracts", {
+				method: "POST",
+				headers: { cookie: `signmos_history_session=${rawSession}` },
+			});
+			expect((await resolveAdminRequest(browser, env, { requireCsrf: false })).ok).toBe(true);
+			expect((await resolveAdminRequest(browser, env, { requireCsrf: true })).ok).toBe(false);
+			browser.headers.set("origin", "https://sign.amerged.com");
+			browser.headers.set("x-csrf-token", await createAdminCsrfToken(rawSession));
+			expect((await resolveAdminRequest(browser, env)).ok).toBe(true);
+			expect(
+				(await resolveAdminRequest(browser, env, { allowBearer: true, requireBearer: true })).ok,
+			).toBe(false);
+			browser.headers.set("origin", "https://evil.example");
+			expect((await resolveAdminRequest(browser, env)).ok).toBe(false);
+			browser.headers.set("cookie", "signmos_history_session=invalid");
+			expect((await resolveAdminRequest(browser, env, { requireCsrf: false })).ok).toBe(false);
+			browser.headers.set("cookie", `signmos_history_session=${rawSession}`);
+			vi.useFakeTimers();
+			try {
+				vi.setSystemTime(Date.now() + 3_600_001);
+				expect((await resolveAdminRequest(browser, env, { requireCsrf: false })).ok).toBe(false);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
 	});
 
 	it("rejects arbitrary email-link identity and disables every legacy login issuance path", async () => {

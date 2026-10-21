@@ -1,19 +1,14 @@
+import { eq } from "drizzle-orm";
 import { z } from "zod";
-import {
-	claimAgentCommand,
-	completeAgentCommand,
-	fingerprintAgentCommand,
-} from "@/db/agentic-access";
+import { fingerprintAgentCommand } from "@/db/agentic-access";
+import { agenticCommandRecords } from "@/db/agentic-access/table";
 import { type EmailDeliveryEnv, EmailDeliveryError, isResendConfigured } from "@/db/envelope";
+import { getDb } from "@/db/setup";
 import { createHono } from "@/hono/factory";
 import { resolveAdminRequest } from "@/omh/auth";
-import {
-	createAndSendContract,
-	getContract,
-	getContractFinalPdf,
-	listContracts,
-} from "@/omh/contracts";
-import { contractCommandPrincipal } from "@/omh/contracts-command";
+import { getContract, getContractFinalPdf, listContracts } from "@/omh/contracts";
+import { claimContractCommand, contractCommandPrincipal } from "@/omh/contracts-command";
+import { createAndSendClaimedContract } from "@/omh/contracts-create";
 import {
 	ContractError,
 	type CreateContractRequest,
@@ -50,7 +45,7 @@ contractsEndpoint.post("/", async (c) => {
 	if (request instanceof Response) return request;
 	const env = c.env as Env & EmailDeliveryEnv & { DOCUMENTS_BUCKET?: R2Bucket };
 	const principal = await contractCommandPrincipal(auth.principal);
-	const claim = await claimAgentCommand({
+	const claim = await claimContractCommand({
 		principal,
 		idempotencyKey: key,
 		operation: "contracts.create-and-send",
@@ -62,19 +57,14 @@ contractsEndpoint.post("/", async (c) => {
 			throw new ContractError("STORAGE_UNAVAILABLE", "Document storage is not configured", 503);
 		if (!isResendConfigured(env))
 			throw new ContractError("EMAIL_UNAVAILABLE", "Email delivery is not configured", 503);
-		const contract = await createAndSendContract({
+		const contract = await createAndSendClaimedContract({
+			recordId: claim.recordId,
 			email: auth.principal.email,
 			request,
 			documentsBucket: env.DOCUMENTS_BUCKET,
 			emailDelivery: { env, baseUrl: env.APP_BASE_URL?.trim() || new URL(c.req.url).origin },
 		});
 		const body = { data: contract };
-		await completeAgentCommand({
-			recordId: claim.recordId,
-			status: 201,
-			body,
-			documentId: contract.id,
-		});
 		return c.json(body, 201);
 	} catch (error) {
 		return completeFailedCommand(claim.recordId, error);
@@ -86,16 +76,19 @@ contractsEndpoint.get("/:id/pdf", async (c) => {
 	if (!auth.ok) return auth.response;
 	const id = ContractIdSchema.safeParse(c.req.param("id"));
 	if (!id.success) return notFound();
-	const contract = await getContract(auth.principal.email, id.data);
-	if (!contract) return notFound();
-	if (contract.status !== "completed")
-		return errorResponse("FINAL_PDF_NOT_READY", "The contract has not been completed", 409);
 	const document = await getContractFinalPdf(auth.principal.email, id.data);
+	if (document.state === "not_found") return notFound();
+	if (document.state === "not_completed")
+		return errorResponse("FINAL_PDF_NOT_READY", "The contract has not been completed", 409);
 	const bucket = (c.env as Env & { DOCUMENTS_BUCKET?: R2Bucket }).DOCUMENTS_BUCKET;
-	const object = document ? await bucket?.get(document.r2Key) : null;
-	if (!document || !object)
+	const object = document.state === "ready" ? await bucket?.get(document.r2Key) : null;
+	if (!object)
 		return errorResponse("FINAL_PDF_UNAVAILABLE", "The final PDF is temporarily unavailable", 503);
-	return new Response(await object.arrayBuffer(), {
+	const bytes = await object.arrayBuffer();
+	const current = await getContractFinalPdf(auth.principal.email, id.data);
+	if (current.state !== "ready" || document.state !== "ready" || current.r2Key !== document.r2Key)
+		return notFound();
+	return new Response(bytes, {
 		headers: {
 			"content-type": "application/pdf",
 			"cache-control": "private, no-store",
@@ -161,7 +154,15 @@ async function completeFailedCommand(recordId: string, error: unknown): Promise<
 		);
 	else throw error;
 	const body = { error: { code: known.code, message: known.message } };
-	await completeAgentCommand({ recordId, status: known.status, body });
+	await getDb()
+		.update(agenticCommandRecords)
+		.set({
+			state: "completed",
+			responseStatus: known.status,
+			responseBody: JSON.stringify(body),
+			completedAt: new Date(),
+		})
+		.where(eq(agenticCommandRecords.id, recordId));
 	return Response.json(body, { status: known.status });
 }
 

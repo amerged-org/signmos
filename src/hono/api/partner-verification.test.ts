@@ -102,38 +102,48 @@ function pushRows(target: Array<Record<string, unknown>>, rows: Array<Record<str
 	return rows;
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: Record<string, unknown>) => ({
-				where: async () => {
-					if (table === state.envelopesTable) {
-						state.envelopes = state.envelopes.map((envelope) => ({ ...envelope, ...value }));
-					}
-					if (table === state.recipientsTable) {
-						state.recipients = state.recipients.map((recipient) => ({ ...recipient, ...value }));
-					}
-					if (table === state.tokensTable) {
-						state.tokens = state.tokens.map((token) => ({ ...token, ...value }));
-					}
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: Record<string, unknown>) => ({
+							where: async () => {
+								if (table === state.envelopesTable) {
+									state.envelopes = state.envelopes.map((envelope) => ({ ...envelope, ...value }));
+								}
+								if (table === state.recipientsTable) {
+									state.recipients = state.recipients.map((recipient) => ({
+										...recipient,
+										...value,
+									}));
+								}
+								if (table === state.tokensTable) {
+									state.tokens = state.tokens.map((token) => ({ ...token, ...value }));
+								}
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("partner verification delivery", () => {
 	beforeEach(() => {

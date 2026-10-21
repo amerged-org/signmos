@@ -1,6 +1,6 @@
 import {
 	getCompletedDocumentView,
-	getFinalDocumentByToken,
+	getFinalDocumentDownloadContext,
 	regenerateFinalDocumentArtifact,
 } from "@/db/envelope";
 import { isCurrentFinalPdfArtifact } from "@/db/envelope/final-pdf-renderer";
@@ -9,10 +9,10 @@ import { createHono } from "@/hono/factory";
 const finalDocumentsEndpoint = createHono();
 
 finalDocumentsEndpoint.get("/:token/pdf", async (c) => {
-	const document = await getFinalDocumentByToken(c.req.param("token"), {
+	const context = await getFinalDocumentDownloadContext(c.req.param("token"), {
 		now: parseNow(c.req.header("x-now")),
 	});
-	if (!document) {
+	if (!context) {
 		return c.json(
 			{
 				error: {
@@ -24,6 +24,7 @@ finalDocumentsEndpoint.get("/:token/pdf", async (c) => {
 		);
 	}
 
+	const document = context.document;
 	const bucket = (c.env as (Env & { DOCUMENTS_BUCKET?: R2Bucket }) | undefined)?.DOCUMENTS_BUCKET;
 	const object = await bucket?.get(document.r2Key);
 	if (!bucket || !object) {
@@ -40,7 +41,38 @@ finalDocumentsEndpoint.get("/:token/pdf", async (c) => {
 
 	const bytes = new Uint8Array(await object.arrayBuffer());
 	const isCurrent = await isCurrentFinalPdfArtifact(bytes);
-	const repaired = isCurrent ? null : await tryRegenerateFinalDocument(document, bucket);
+	let repaired: Awaited<ReturnType<typeof regenerateFinalDocumentArtifact>> = null;
+	if (!isCurrent && context.snapshot.sourceDocument) {
+		try {
+			repaired = await regenerateFinalDocumentArtifact(document, {
+				documentsBucket: bucket,
+				snapshot: context.snapshot,
+				access: context.access,
+			});
+		} catch {
+			return c.json(
+				{
+					error: {
+						code: "FINAL_PDF_REPAIR_PENDING",
+						message: "The retained PDF is being checked. Retry this download.",
+						retryable: true,
+					},
+				},
+				503,
+			);
+		}
+	}
+	if (
+		!repaired &&
+		!(await getFinalDocumentDownloadContext(c.req.param("token"), {
+			now: parseNow(c.req.header("x-now")),
+		}))
+	) {
+		return c.json(
+			{ error: { code: "FINAL_PDF_NOT_FOUND", message: "Completed PDF is not available" } },
+			404,
+		);
+	}
 
 	const responseBytes = repaired?.bytes ?? bytes;
 	return new Response(toArrayBuffer(responseBytes), {
@@ -71,18 +103,6 @@ export default finalDocumentsEndpoint;
 
 function parseNow(nowHeader: string | undefined): Date {
 	return new Date(nowHeader ?? Date.now());
-}
-
-async function tryRegenerateFinalDocument(
-	document: Awaited<ReturnType<typeof getFinalDocumentByToken>>,
-	bucket: R2Bucket,
-) {
-	if (!document) return null;
-	try {
-		return await regenerateFinalDocumentArtifact(document, { documentsBucket: bucket });
-	} catch {
-		return null;
-	}
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
