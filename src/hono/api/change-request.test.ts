@@ -219,7 +219,7 @@ describe("partner change requests", () => {
 			text: string;
 		};
 		expect(body.to).toEqual(["sender@example.com"]);
-		expect(body.subject).toBe("Changes requested on your document");
+		expect(body.subject).toBe("Änderungen an deinem Vertrag angefragt · amerged Sign");
 		expect(body.html).toContain("https://signmos.example/source-pdf-upload");
 		expect(body.text).toContain("Please update the billing address.");
 		fetchMock.mockRestore();

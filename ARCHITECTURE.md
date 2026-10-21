@@ -1,3 +1,9 @@
+# amerged Sign fork architecture
+
+The amerged fork keeps the upstream document lifecycle described below and changes its hosting boundaries: request-scoped OMH PostgreSQL via `src/db/omh-driver.ts`, private immutable files via `src/omh/storage.ts`, and private transactional mail via `src/omh/mail.ts`. `src/server.ts` initializes those request bindings and enforces the administrator gate before dispatch. `src/omh/auth-*` owns allowlisted email-link login, secure sessions, CSRF and token management. `src/omh/contracts*` owns the convenience send/read/download API; owner authorization remains explicit. The private browser console lives under `src/components/console`. Recipient verification/signing pages remain separate public, token-authorized entry points. See `plans/amerged-sign-omh-prd.md` for the fork acceptance scope.
+
+The original direct-Neon migration/seed/deploy commands are retired in this fork. OMH applies fresh additive schema under `database/omh-migrations`; no production rows or credentials are imported from upstream. The inherited code map below provides context for the retained domain modules.
+
 # ARCHITECTURE
 
 This is the stable physical map for signmos. It names important files and modules but avoids deep links so the document stays useful as code moves. Use symbol search and filenames from this map when navigating.

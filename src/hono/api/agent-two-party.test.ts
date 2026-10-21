@@ -2,6 +2,7 @@ import { agenticApiTokens, agenticSecurityEvents } from "@/db/agentic-access";
 import { hashAgenticCredential } from "@/db/agentic-access/request";
 import { emailSendRecords, envelopeFields, envelopeRecipients, envelopes } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 import {
 	agentSelfSignBucket,
 	agentSelfSignTables,
@@ -211,7 +212,7 @@ describe("agent two-party creator", () => {
 			{
 				method: "PUT",
 				headers: commandHeaders("fields-upload", "application/pdf"),
-				body: "%PDF-1.7\ntwo party fields\n%%EOF",
+				body: pdfFixtureText("two party fields"),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);

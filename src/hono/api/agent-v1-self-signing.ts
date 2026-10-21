@@ -178,7 +178,7 @@ agentSelfSignSigningEndpoint.get(agentSelfSignOperations.signingTask.relativePat
 	const selfToken = await getAgentSelfSignToken(principal, documentId);
 	const partnerAuthorization = selfToken
 		? null
-		: await authorizeAgentPartnerSigning(principal, documentId);
+		: await authorizeAgentPartnerSigning(principal, documentId, { allowCompletionRetry: true });
 	if (!selfToken && partnerAuthorization?.state !== "active") {
 		const error = agentPartnerAuthorizationError(
 			partnerAuthorization ?? { state: "not_found" },

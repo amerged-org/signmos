@@ -12,6 +12,7 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 import {
 	agentSelfSignBucket,
 	selfSignRows,
@@ -42,7 +43,7 @@ async function createUploadedDraft(key: string, bucket: R2Bucket): Promise<strin
 		{
 			method: "PUT",
 			headers: commandHeaders(`${key}-upload`, "application/pdf"),
-			body: "%PDF-1.7\nself sign workflow\n%%EOF",
+			body: pdfFixtureText("self sign workflow"),
 		},
 		{ DOCUMENTS_BUCKET: bucket },
 	);

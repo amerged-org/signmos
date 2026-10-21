@@ -2,6 +2,7 @@ import { agenticApiTokens, agenticSecurityEvents } from "@/db/agentic-access";
 import { hashAgenticCredential } from "@/db/agentic-access/request";
 import { envelopeFields, fieldValues, signatureProfiles } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 import { approveAgentReview } from "./agent-human-review-test-helper";
 import {
 	agentSelfSignBucket,
@@ -63,7 +64,7 @@ describe("agent self-sign lifecycle explicit field preparation", () => {
 			{
 				method: "PUT",
 				headers: headers("explicit-upload", ownerToken, "application/pdf"),
-				body: "%PDF-1.7\nexplicit fields\n%%EOF",
+				body: pdfFixtureText("explicit fields", 2),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);
@@ -78,7 +79,7 @@ describe("agent self-sign lifecycle explicit field preparation", () => {
 			{ DOCUMENTS_BUCKET: bucket },
 		);
 		expect(sourceContent.status).toBe(200);
-		expect(await sourceContent.text()).toBe("%PDF-1.7\nexplicit fields\n%%EOF");
+		expect(await sourceContent.text()).toBe(pdfFixtureText("explicit fields", 2));
 		expect(selfSignRows(agenticSecurityEvents)).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ eventType: "agentic.source_pdf.metadata_read" }),
@@ -171,7 +172,7 @@ describe("agent self-sign lifecycle explicit field preparation", () => {
 			{
 				method: "PUT",
 				headers: headers("drawn-upload", ownerToken, "application/pdf"),
-				body: "%PDF-1.7\ndrawn completion\n%%EOF",
+				body: pdfFixtureText("drawn completion"),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);

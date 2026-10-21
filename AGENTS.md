@@ -1,3 +1,5 @@
+> amerged Sign fork: production hosting is ohmyho.st, not an upstream Wrangler deployment. Follow `plans/amerged-sign-omh-prd.md`, `ohmyhost.yaml` and `docs/contracts-api.md`. `src/server.ts` wraps requests with lazy `withDatabase(env, callback)` and administrator authorization; the private OMH Drizzle driver replaces Neon HTTP. Files and transactional mail use the private OMH runtime clients. The upstream Wrangler environments, direct-deployment script and historical release evidence are retained reference material and must not be used to publish this fork. Never deploy to the upstream signmos.com hostname.
+
 # signmos Agent Map
 
 Signmos is a lightweight e-signature workflow on TanStack Start, Hono, Cloudflare Workers, Neon Postgres, Drizzle, and Cloudflare R2.

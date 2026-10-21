@@ -6,3 +6,4 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@dotenvx/dotenvx@2.11.1'
   - knip@6.27.0
+  - '@amerged/ohmyhost-runtime@0.1.36'

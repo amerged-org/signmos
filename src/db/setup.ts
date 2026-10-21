@@ -1,22 +1,32 @@
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+	type CustomerDatabaseBinding,
+	createPrivateDatabaseClient,
+} from "@ohmyhost/customer-runtime/database";
+import { createOmhDatabase, type OmhDatabase } from "./omh-driver";
 
-let db: ReturnType<typeof drizzle>;
-
-interface DbConfig {
-	host: string;
-	username: string;
-	password: string;
+interface RequestDatabase {
+	readonly binding: CustomerDatabaseBinding;
+	database?: OmhDatabase;
 }
 
-export function initDatabase(config: DbConfig) {
-	if (db) return db;
-	const connectionString = `postgres://${config.username}:${config.password}@${config.host}`;
-	db = drizzle(neon(connectionString));
-	return db;
+const databaseContext = new AsyncLocalStorage<RequestDatabase>();
+
+export interface DatabaseEnv {
+	readonly OHMYHOST_DATABASE: CustomerDatabaseBinding;
 }
 
-export function getDb() {
-	if (!db) throw new Error("Database not initialized. Call initDatabase() first.");
-	return db;
+/** Bind persistence to this request's private OMH service, including async work. */
+export function withDatabase<Result>(
+	env: DatabaseEnv,
+	run: () => Promise<Result>,
+): Promise<Result> {
+	return databaseContext.run({ binding: env.OHMYHOST_DATABASE }, run);
+}
+
+export function getDb(): OmhDatabase {
+	const scope = databaseContext.getStore();
+	if (!scope) throw new Error("Database is outside an active request scope.");
+	scope.database ??= createOmhDatabase(createPrivateDatabaseClient(scope.binding));
+	return scope.database;
 }

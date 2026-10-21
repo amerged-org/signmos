@@ -213,8 +213,8 @@ describe("envelope controls", () => {
 			},
 			{
 				DOCUMENTS_BUCKET: {
-					delete: async (key: string) => {
-						state.deletedKeys.push(key);
+					delete: async (keys: string | string[]) => {
+						state.deletedKeys.push(...(Array.isArray(keys) ? keys : [keys]));
 					},
 				},
 			},

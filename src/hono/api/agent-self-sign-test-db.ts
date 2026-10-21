@@ -1,4 +1,5 @@
 import { inflateSync } from "node:zlib";
+import { PDFDocument } from "pdf-lib";
 import { agenticApiTokens, agenticSecurityEvents } from "@/db/agentic-access/table";
 import {
 	auditEvents,
@@ -50,6 +51,14 @@ export const agentSelfSignTables = [
 	auditEvents,
 	finalDocuments,
 ] as const;
+
+export async function contractPdfFixture(): Promise<ArrayBuffer> {
+	const pdf = await PDFDocument.create();
+	pdf.setCreationDate(new Date("2026-10-21T08:00:00Z"));
+	pdf.setModificationDate(new Date("2026-10-21T08:00:00Z"));
+	pdf.addPage([612, 792]).drawText("Contract fixture");
+	return Uint8Array.from(await pdf.save({ useObjectStreams: false })).buffer;
+}
 
 export function selfSignRows(table: unknown): AgentSelfSignStoredRow[] {
 	const tableRows = agentSelfSignTestState.rows.get(table) ?? [];
@@ -171,12 +180,14 @@ export function agentSelfSignBucket(): R2Bucket {
 			const bytes = agentSelfSignTestState.r2Objects.get(key);
 			return bytes ? ({ arrayBuffer: async () => bytes.buffer } as R2ObjectBody) : null;
 		},
-		delete: async (key: string) => {
-			agentSelfSignTestState.r2Objects.delete(key);
-			agentSelfSignTestState.r2DeleteCounts.set(
-				key,
-				(agentSelfSignTestState.r2DeleteCounts.get(key) ?? 0) + 1,
-			);
+		delete: async (keys: string | string[]) => {
+			for (const key of Array.isArray(keys) ? keys : [keys]) {
+				agentSelfSignTestState.r2Objects.delete(key);
+				agentSelfSignTestState.r2DeleteCounts.set(
+					key,
+					(agentSelfSignTestState.r2DeleteCounts.get(key) ?? 0) + 1,
+				);
+			}
 		},
 	} as R2Bucket;
 }

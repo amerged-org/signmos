@@ -20,6 +20,7 @@ import {
 	SigningNoAssignedFieldsError,
 	updateSignerFieldPlacement,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import {
 	authorizeHistorySigner,
 	getHistoryCompletedDocumentView,
@@ -33,7 +34,7 @@ import { historyError } from "./history-errors";
 
 const historySigningEndpoint = createHono();
 const HistorySigningFieldPlacementSchema = z.object({
-	page: z.number().int().min(1).optional(),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).optional(),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 });

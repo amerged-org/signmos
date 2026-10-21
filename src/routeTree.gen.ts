@@ -14,6 +14,7 @@ import { Route as AgenticAccessRouteImport } from './routes/agentic-access'
 import { Route as AgenticConsoleRouteImport } from './routes/agentic-console'
 import { Route as ClientsRouteImport } from './routes/clients'
 import { Route as EnvelopeFieldsRouteImport } from './routes/envelope-fields'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as ManualSigningSmokeRouteImport } from './routes/manual-signing-smoke'
 import { Route as MyDocumentsRouteImport } from './routes/my-documents'
 import { Route as NewDocumentRouteImport } from './routes/new-document'
@@ -53,6 +54,11 @@ const ClientsRoute = ClientsRouteImport.update({
 const EnvelopeFieldsRoute = EnvelopeFieldsRouteImport.update({
   id: '/envelope-fields',
   path: '/envelope-fields',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ManualSigningSmokeRoute = ManualSigningSmokeRouteImport.update({
@@ -142,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/agentic-console': typeof AgenticConsoleRoute
   '/clients': typeof ClientsRoute
   '/envelope-fields': typeof EnvelopeFieldsRoute
+  '/login': typeof LoginRoute
   '/manual-signing-smoke': typeof ManualSigningSmokeRoute
   '/my-documents': typeof MyDocumentsRouteWithChildren
   '/new-document': typeof NewDocumentRoute
@@ -164,6 +171,7 @@ export interface FileRoutesByTo {
   '/agentic-console': typeof AgenticConsoleRoute
   '/clients': typeof ClientsRoute
   '/envelope-fields': typeof EnvelopeFieldsRoute
+  '/login': typeof LoginRoute
   '/manual-signing-smoke': typeof ManualSigningSmokeRoute
   '/new-document': typeof NewDocumentRoute
   '/source-pdf-upload': typeof SourcePdfUploadRoute
@@ -185,6 +193,7 @@ export interface FileRoutesById {
   '/agentic-console': typeof AgenticConsoleRoute
   '/clients': typeof ClientsRoute
   '/envelope-fields': typeof EnvelopeFieldsRoute
+  '/login': typeof LoginRoute
   '/manual-signing-smoke': typeof ManualSigningSmokeRoute
   '/my-documents': typeof MyDocumentsRouteWithChildren
   '/new-document': typeof NewDocumentRoute
@@ -209,6 +218,7 @@ export interface FileRouteTypes {
     | '/agentic-console'
     | '/clients'
     | '/envelope-fields'
+    | '/login'
     | '/manual-signing-smoke'
     | '/my-documents'
     | '/new-document'
@@ -231,6 +241,7 @@ export interface FileRouteTypes {
     | '/agentic-console'
     | '/clients'
     | '/envelope-fields'
+    | '/login'
     | '/manual-signing-smoke'
     | '/new-document'
     | '/source-pdf-upload'
@@ -251,6 +262,7 @@ export interface FileRouteTypes {
     | '/agentic-console'
     | '/clients'
     | '/envelope-fields'
+    | '/login'
     | '/manual-signing-smoke'
     | '/my-documents'
     | '/new-document'
@@ -274,6 +286,7 @@ export interface RootRouteChildren {
   AgenticConsoleRoute: typeof AgenticConsoleRoute
   ClientsRoute: typeof ClientsRoute
   EnvelopeFieldsRoute: typeof EnvelopeFieldsRoute
+  LoginRoute: typeof LoginRoute
   ManualSigningSmokeRoute: typeof ManualSigningSmokeRoute
   MyDocumentsRoute: typeof MyDocumentsRouteWithChildren
   NewDocumentRoute: typeof NewDocumentRoute
@@ -321,6 +334,13 @@ declare module '@tanstack/react-router' {
       path: '/envelope-fields'
       fullPath: '/envelope-fields'
       preLoaderRoute: typeof EnvelopeFieldsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/manual-signing-smoke': {
@@ -468,6 +488,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgenticConsoleRoute: AgenticConsoleRoute,
   ClientsRoute: ClientsRoute,
   EnvelopeFieldsRoute: EnvelopeFieldsRoute,
+  LoginRoute: LoginRoute,
   ManualSigningSmokeRoute: ManualSigningSmokeRoute,
   MyDocumentsRoute: MyDocumentsRouteWithChildren,
   NewDocumentRoute: NewDocumentRoute,

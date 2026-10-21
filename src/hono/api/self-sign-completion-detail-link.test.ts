@@ -11,6 +11,7 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes } from "@/test/pdf-fixtures";
 
 const envelopeId = "00000000-0000-4000-8000-000000000001";
 const recipientId = "20000000-0000-4000-8000-000000000001";
@@ -316,6 +317,9 @@ function resetState() {
 	state.finalDocuments = [];
 	state.emailSendRecords = [];
 	state.r2Objects.clear();
+	const sourcePdf = pdfFixtureBytes("Self-sign agreement");
+	state.sourceDocuments[0] = { ...state.sourceDocuments[0], byteSize: sourcePdf.byteLength };
+	state.r2Objects.set(`envelopes/${envelopeId}/source.pdf`, sourcePdf);
 }
 
 function seedCompletedFinalDocument() {

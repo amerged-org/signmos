@@ -179,6 +179,9 @@ vi.mock("@/db/setup", () => ({
 					if (table === state.envelopesTable) {
 						state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
 					}
+					if (table === state.finalDocumentsTable) {
+						state.finalDocuments[0] = { ...state.finalDocuments[0], ...value };
+					}
 					return [];
 				},
 			}),
@@ -406,9 +409,15 @@ describe("PDF finalization", () => {
 			updateMetadata: false,
 		});
 		expect(tokenPdf.getProducer()).toBe(FINAL_PDF_RENDERER_PRODUCER);
-		const storedPdf = await PDFDocument.load(state.r2Objects.get(r2Key) ?? new Uint8Array(), {
-			updateMetadata: false,
-		});
+		const regeneratedKey = String(state.finalDocuments[0]?.r2Key);
+		expect(regeneratedKey).not.toBe(r2Key);
+		expect(state.r2Objects.get(r2Key)).toEqual(finalPdf);
+		const storedPdf = await PDFDocument.load(
+			state.r2Objects.get(regeneratedKey) ?? new Uint8Array(),
+			{
+				updateMetadata: false,
+			},
+		);
 		expect(storedPdf.getProducer()).toBe(FINAL_PDF_RENDERER_PRODUCER);
 
 		const senderDownload = await apiHono.request(

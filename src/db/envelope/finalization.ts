@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import { recordArtifactVersion } from "./artifact-versions";
 import { buildCertificateMaterial, renderFinalPdf } from "./final-pdf-renderer";
 import {
 	type Envelope,
@@ -62,11 +63,18 @@ export async function finalizeCompletedEnvelope(
 	if (!options.documentsBucket) return null;
 
 	const db = getDb();
+	const [existing] = await db
+		.select()
+		.from(finalDocuments)
+		.where(eq(finalDocuments.envelopeId, envelopeId))
+		.limit(1);
+	if (existing) return FinalDocumentSchema.parse(existing);
 	const artifact = await renderFinalDocumentArtifact(envelopeId, options.documentsBucket);
-	const r2Key = `envelopes/${envelopeId}/final.pdf`;
+	const r2Key = `envelopes/${envelopeId}/final/${artifact.sha256}.pdf`;
 	await options.documentsBucket.put(r2Key, artifact.bytes, {
 		httpMetadata: { contentType: artifact.contentType },
 	});
+	await recordArtifactVersion(envelopeId, r2Key);
 
 	const [document] = await db
 		.insert(finalDocuments)
@@ -89,17 +97,23 @@ export async function regenerateFinalDocumentArtifact(
 ): Promise<{ document: FinalDocument; bytes: Uint8Array } | null> {
 	if (!options.documentsBucket) return null;
 	const db = getDb();
+	await recordArtifactVersion(finalDocument.envelopeId, finalDocument.r2Key);
 	const artifact = await renderFinalDocumentArtifact(
 		finalDocument.envelopeId,
 		options.documentsBucket,
 	);
-	await options.documentsBucket.put(finalDocument.r2Key, artifact.bytes, {
+	// OMH logical file names are immutable, including after deletion. Repairing an
+	// older renderer's artifact therefore creates a new content-addressed version.
+	const r2Key = `envelopes/${finalDocument.envelopeId}/final/${artifact.sha256}.pdf`;
+	await options.documentsBucket.put(r2Key, artifact.bytes, {
 		httpMetadata: { contentType: artifact.contentType },
 	});
+	await recordArtifactVersion(finalDocument.envelopeId, r2Key);
 	if (finalDocument.id) {
 		await db
 			.update(finalDocuments)
 			.set({
+				r2Key,
 				sha256: artifact.sha256,
 				byteSize: artifact.byteSize,
 				contentType: artifact.contentType,
@@ -109,6 +123,7 @@ export async function regenerateFinalDocumentArtifact(
 	return {
 		document: {
 			...finalDocument,
+			r2Key,
 			sha256: artifact.sha256,
 			byteSize: artifact.byteSize,
 			contentType: artifact.contentType,

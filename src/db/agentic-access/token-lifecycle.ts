@@ -26,7 +26,10 @@ export async function listAgenticTokens(email: string): Promise<{
 	return {
 		activeLimit: agenticActiveTokenLimit,
 		tokens: rows
-			.filter((token) => token.email === email)
+			.filter(
+				(token) =>
+					token.email === email && (token.status === "active" || token.status === "revoked"),
+			)
 			.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
 			.map(toAgenticTokenMetadata),
 	};

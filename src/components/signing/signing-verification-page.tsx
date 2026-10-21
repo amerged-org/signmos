@@ -49,7 +49,7 @@ export function SigningVerificationPage({
 			if (!response.ok || !isSigningVerificationSuccess(json)) {
 				const message = isSigningVerificationError(json)
 					? json.error.message
-					: "Unable to verify this signing link";
+					: "Dieser Link konnte nicht bestätigt werden.";
 				setState({ status: "error", message });
 				return;
 			}
@@ -60,7 +60,8 @@ export function SigningVerificationPage({
 		}
 
 		verify().catch(() => {
-			if (!cancelled) setState({ status: "error", message: "Unable to verify this signing link" });
+			if (!cancelled)
+				setState({ status: "error", message: "Dieser Link konnte nicht bestätigt werden." });
 		});
 
 		return () => {
@@ -70,34 +71,36 @@ export function SigningVerificationPage({
 
 	return (
 		<PageShell width="narrow">
-			<PageHeader title="Signing verification" />
+			<PageHeader title="E-Mail-Adresse bestätigen" />
 
 			{state.status === "verifying" ? (
 				<Alert>
 					<Loader2 className="size-4 animate-spin" />
-					<AlertTitle>Verifying email</AlertTitle>
-					<AlertDescription>Checking this signing link.</AlertDescription>
+					<AlertTitle>E-Mail-Adresse wird geprüft…</AlertTitle>
+					<AlertDescription>Dein persönlicher Zugang zum Vertrag wird geprüft.</AlertDescription>
 				</Alert>
 			) : null}
 
 			{state.status === "verified" ? (
 				<Alert>
 					<Check className="size-4" />
-					<AlertTitle>Email verified</AlertTitle>
-					<AlertDescription>You can now open the signing page.</AlertDescription>
+					<AlertTitle>E-Mail-Adresse bestätigt</AlertTitle>
+					<AlertDescription>
+						Du kannst den Vertrag jetzt prüfen und unterschreiben.
+					</AlertDescription>
 				</Alert>
 			) : null}
 
 			{state.status === "error" ? (
 				<Alert variant="destructive" role="alert">
-					<AlertTitle>Verification failed</AlertTitle>
+					<AlertTitle>Bestätigung nicht möglich</AlertTitle>
 					<AlertDescription>{state.message}</AlertDescription>
 				</Alert>
 			) : null}
 
 			{state.status === "verified" ? (
 				<Button asChild>
-					<a href={state.signingUrl}>Continue to sign</a>
+					<a href={state.signingUrl}>Zum Vertrag</a>
 				</Button>
 			) : null}
 		</PageShell>

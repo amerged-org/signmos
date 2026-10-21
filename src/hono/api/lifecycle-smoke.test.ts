@@ -12,6 +12,7 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -235,7 +236,7 @@ describe("agent lifecycle smoke path", () => {
 					"content-type": "application/pdf",
 					"x-internal-user-id": "user_123",
 				},
-				body: "%PDF-1.4\n%%EOF",
+				body: pdfFixtureText(),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);
@@ -347,7 +348,7 @@ describe("agent lifecycle smoke path", () => {
 					"content-type": "application/pdf",
 					"x-internal-user-id": "sender_123",
 				},
-				body: "%PDF-1.4\nrevised\n%%EOF",
+				body: pdfFixtureText("revised"),
 			},
 			{ DOCUMENTS_BUCKET: bucket },
 		);

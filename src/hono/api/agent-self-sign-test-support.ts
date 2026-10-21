@@ -3,6 +3,7 @@ import { hashAgenticCredential } from "@/db/agentic-access/request";
 import { apiHono } from "@/hono/api";
 import {
 	agentSelfSignTables,
+	contractPdfFixture,
 	selfSignRows,
 	agentSelfSignTestState as state,
 } from "./agent-self-sign-test-db";
@@ -31,7 +32,7 @@ export async function createUploadedSelfSignDraft(key: string, bucket: R2Bucket)
 		{
 			method: "PUT",
 			headers: selfSignCommandHeaders(`${key}-upload`, "application/pdf"),
-			body: "%PDF-1.7\nself sign workflow\n%%EOF",
+			body: await contractPdfFixture(),
 		},
 		{ DOCUMENTS_BUCKET: bucket },
 	);

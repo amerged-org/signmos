@@ -1,6 +1,7 @@
 import { agenticCommandRecords, agenticSecurityEvents } from "@/db/agentic-access";
 import { envelopes, fieldValues, finalDocuments } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 import {
 	agentSelfSignBucket,
 	selfSignRows as rows,
@@ -47,7 +48,7 @@ async function queueSelfSignReview(env?: Partial<Env>) {
 				...agentHeaders("human-review-upload", "application/pdf"),
 				"x-source-filename": "review-me.pdf",
 			},
-			body: "%PDF-1.7\nhuman review fixture\n%%EOF",
+			body: pdfFixtureText("human review fixture"),
 		},
 		{ DOCUMENTS_BUCKET: bucket },
 	);
@@ -99,11 +100,11 @@ export async function expectSafeIdempotentNotification() {
 			html: string;
 		};
 		expect(email.to).toEqual(["ada@example.com"]);
-		expect(email.subject).toContain("Review");
+		expect(email.subject).toBe("Freigabe angefragt: review-me.pdf · amerged Sign");
 		expect(email.text).toContain("review-me.pdf");
 		expect(email.text).toContain("Sign and complete");
 		expect(email.text).toContain("Ada review agent");
-		expect(email.text).toContain("Review in Signmos");
+		expect(email.text).toContain("In amerged Sign prüfen");
 		expect(email.text).not.toContain("Ada Lovelace");
 		expect(JSON.stringify(email)).not.toContain(rawAgentToken);
 		return new Response(JSON.stringify({ id: "resend-review-1" }), { status: 200 });

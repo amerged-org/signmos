@@ -4,12 +4,14 @@ import { envelopes, fieldValues, finalDocuments } from "@/db/envelope";
 import { hashHistoryCredential } from "@/db/history-access/request";
 import { historySecurityEvents, historySessions } from "@/db/history-access/table";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 import {
 	agentSelfSignBucket,
 	agentSelfSignTables,
 	selfSignRows as rows,
 	agentSelfSignTestState as state,
 } from "./agent-self-sign-test-db";
+import { expectFinalizationRetryRecovery } from "./human-review-finalization-test-assertions";
 import {
 	expectFailedNotificationRemainsPending,
 	expectMatchingQueueVisibility,
@@ -73,7 +75,7 @@ async function queueSelfSignReview(env?: Partial<Env>) {
 				...agentHeaders("human-review-upload", "application/pdf"),
 				"x-source-filename": "review-me.pdf",
 			},
-			body: "%PDF-1.7\nhuman review fixture\n%%EOF",
+			body: pdfFixtureText("human review fixture"),
 		},
 		{ DOCUMENTS_BUCKET: bucket },
 	);
@@ -377,6 +379,13 @@ describe("human review browser boundary", () => {
 				(event) => event.eventType === "human_review.execution_failed",
 			),
 		).toHaveLength(1);
+		await expectFinalizationRetryRecovery({
+			documentId,
+			bucket,
+			completionPayload,
+			agentHeaders,
+			approveReview,
+		});
 	});
 
 	it("records matching-human rejection as terminal without signing", async () => {

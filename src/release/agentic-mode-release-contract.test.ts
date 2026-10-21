@@ -74,7 +74,14 @@ describe("agent API contract release", () => {
 		expect(document.paths["/api/v1/documents/{documentId}/source-pdf"]?.put?.requestBody).toEqual(
 			expect.objectContaining({
 				content: {
-					"application/pdf": { schema: { type: "string", format: "binary" } },
+					"application/pdf": {
+						schema: {
+							type: "string",
+							format: "binary",
+							maxLength: 2_097_152,
+							description: "At most 2097152 bytes and 10 PDF pages",
+						},
+					},
 				},
 			}),
 		);

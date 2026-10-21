@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_DOCUMENT_FIELDS, MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import {
 	CompleteSigningRequestSchema,
 	CompleteSigningResultSchema,
@@ -164,6 +165,9 @@ const agentDocumentErrorCodes = [
 	"AGENT_SELF_SIGN_ACTION_BLOCKED",
 	"INVALID_SOURCE_PDF",
 	"SOURCE_PDF_TOO_LARGE",
+	"SOURCE_PDF_TOO_MANY_PAGES",
+	"SOURCE_PDF_TOO_MANY_FIELDS",
+	"FINAL_PDF_GENERATION_FAILED",
 	"DUPLICATE_SOURCE_PDF",
 	"ENVELOPE_NOT_DRAFT",
 	"AGENT_SOURCE_PDF_UNAVAILABLE",
@@ -258,7 +262,7 @@ export const AgentSignatureProfileResponseSchema = z.object({
 const AgentSelfSignFieldCreateSchema = z.object({
 	recipientId: z.string().uuid().optional(),
 	type: FieldTypeSchema,
-	page: z.number().int().min(1),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 	width: z.number().int().positive(),
@@ -266,12 +270,12 @@ const AgentSelfSignFieldCreateSchema = z.object({
 });
 
 export const AgentSelfSignFieldsRequestSchema = z.object({
-	fields: z.array(AgentSelfSignFieldCreateSchema).min(1),
+	fields: z.array(AgentSelfSignFieldCreateSchema).min(1).max(MAX_DOCUMENT_FIELDS),
 });
 
 export const AgentSelfSignDefaultFieldsRequestSchema = z.object({
 	recipientIds: z.array(z.string().uuid()).min(1).max(10).optional(),
-	page: z.number().int().min(1).default(1),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).default(1),
 });
 
 export const AgentSelfSignFieldsResponseSchema = z.object({
@@ -286,7 +290,7 @@ export const AgentFieldsResponseSchema = z.object({ data: z.array(EnvelopeFieldR
 export const AgentSelfSignTaskResponseSchema = z.object({ data: SignerSessionSchema });
 
 export const AgentSelfSignFieldPlacementRequestSchema = z.object({
-	page: z.number().int().min(1).optional(),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).optional(),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 });

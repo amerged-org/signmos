@@ -1,6 +1,5 @@
 import {
 	authorizeAgentPartnerSigning,
-	completeAgentCommand,
 	getAgentSelfSignToken,
 	getAuthorizedAgentCreatorEnvelope,
 	recordAgentDocumentRead,
@@ -16,6 +15,7 @@ import {
 	type EmailDeliveryOptions,
 	type SignerToken,
 	SigningCompletionBlockedError,
+	SigningFinalizationError,
 	SigningNoAssignedFieldsError,
 } from "@/db/envelope";
 import { agentPartnerAuthorizationError } from "./agent-partner-errors";
@@ -30,7 +30,6 @@ export async function executeAgentSigningCompletion(input: {
 	principal: AgenticPrincipal;
 	documentId: string;
 	request: CompleteSigningRequest;
-	recordId: string;
 	now: Date;
 	requestIp?: string;
 	documentsBucket?: R2Bucket;
@@ -47,16 +46,9 @@ export async function executeAgentSigningCompletion(input: {
 			eventType: completionEventType(target),
 			requestIp: input.requestIp,
 		});
-		await completeAgentCommand({
-			recordId: input.recordId,
-			status: 200,
-			body,
-			documentId: input.documentId,
-			now: input.now,
-		});
 		return Response.json(body);
 	} catch (error) {
-		return handleAgentCompletionError(input.recordId, input.documentId, error);
+		return handleAgentCompletionError(input.documentId, error);
 	}
 }
 
@@ -82,20 +74,19 @@ async function completeTarget(
 async function resolveAgentCompletionTarget(input: {
 	principal: AgenticPrincipal;
 	documentId: string;
-	recordId: string;
 }): Promise<AgentCompletionTarget | Response> {
 	const envelope = await getAuthorizedAgentCreatorEnvelope(input.principal, input.documentId);
 	if (envelope?.signingMode === "only_me") {
 		const token = await getAgentSelfSignToken(input.principal, input.documentId);
-		return token
-			? { kind: "self", token }
-			: completeSigningTaskMissing(input.recordId, input.documentId);
+		return token ? { kind: "self", token } : completeSigningTaskMissing(input.documentId);
 	}
 	if (envelope) return { kind: "creator" };
-	const authorization = await authorizeAgentPartnerSigning(input.principal, input.documentId);
+	const authorization = await authorizeAgentPartnerSigning(input.principal, input.documentId, {
+		allowCompletionRetry: true,
+	});
 	if (authorization.state === "active") return { kind: "partner", token: authorization.token };
 	const error = agentPartnerAuthorizationError(authorization, input.documentId);
-	return completeKnownError(input.recordId, input.documentId, error.status, error.body);
+	return knownErrorResponse(error.status, error.body);
 }
 
 function completionEventType(target: AgentCompletionTarget) {
@@ -104,28 +95,34 @@ function completionEventType(target: AgentCompletionTarget) {
 	return "agentic.creator_signing.completed" as const;
 }
 
-function handleAgentCompletionError(
-	recordId: string,
-	documentId: string,
-	error: unknown,
-): Promise<Response> {
+function handleAgentCompletionError(documentId: string, error: unknown): Response {
+	if (error instanceof SigningFinalizationError) {
+		return knownErrorResponse(
+			503,
+			agentError({
+				code: error.code,
+				message: error.message,
+				retryable: true,
+				allowedActions: ["retry_completion"],
+				recoveryUrl: `/api/v1/documents/${documentId}/signing-task`,
+			}),
+		);
+	}
 	if (error instanceof EmailDeliveryError) {
-		return completeKnownError(recordId, documentId, 502, completionEmailError(documentId));
+		return knownErrorResponse(502, completionEmailError(documentId));
 	}
 	if (
 		error instanceof SigningCompletionBlockedError ||
 		error instanceof SigningNoAssignedFieldsError ||
 		error instanceof CreatorSigningBlockedError
 	) {
-		return completeKnownError(recordId, documentId, 409, blockedError(documentId, error.message));
+		return knownErrorResponse(409, blockedError(documentId, error.message));
 	}
 	throw error;
 }
 
-function completeSigningTaskMissing(recordId: string, documentId: string): Promise<Response> {
-	return completeKnownError(
-		recordId,
-		documentId,
+function completeSigningTaskMissing(documentId: string): Response {
+	return knownErrorResponse(
 		404,
 		agentError({
 			code: "AGENT_SIGNING_TASK_NOT_FOUND",
@@ -137,13 +134,7 @@ function completeSigningTaskMissing(recordId: string, documentId: string): Promi
 	);
 }
 
-async function completeKnownError(
-	recordId: string,
-	documentId: string,
-	status: number,
-	body: unknown,
-): Promise<Response> {
-	await completeAgentCommand({ recordId, status, body, documentId });
+function knownErrorResponse(status: number, body: unknown): Response {
 	return Response.json(body, { status });
 }
 

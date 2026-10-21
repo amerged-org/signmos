@@ -80,14 +80,14 @@ export function SignerPage(props: SignerPageProps) {
 			body: JSON.stringify(payload),
 		});
 		if (response.ok) {
-			setMessage("Signing complete");
+			setMessage("Vielen Dank. Deine Unterschrift wurde gespeichert.");
 			await refreshSigningState();
 			return;
 		}
 		const body = (await response.json().catch((): { error?: SigningError } => ({}))) as {
 			error?: SigningError;
 		};
-		setMessage(body.error?.message ?? "Unable to complete signing");
+		setMessage(body.error?.message ?? "Die Unterschrift konnte nicht gespeichert werden.");
 	}
 
 	async function declineSigning(event: React.FormEvent<HTMLFormElement>) {
@@ -97,7 +97,11 @@ export function SignerPage(props: SignerPageProps) {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ reason, comment: comment || undefined }),
 		});
-		setMessage(response.ok ? "Signing declined" : "Unable to decline");
+		setMessage(
+			response.ok
+				? "Die Unterschrift wurde abgelehnt."
+				: "Die Ablehnung konnte nicht gespeichert werden.",
+		);
 		if (response.ok && historyMode) await refreshSigningState();
 	}
 
@@ -109,7 +113,11 @@ export function SignerPage(props: SignerPageProps) {
 			body: JSON.stringify({ comment: changeComment }),
 		});
 		if (response.ok) setChangeRequested(true);
-		setMessage(response.ok ? "Changes requested" : "Unable to request changes");
+		setMessage(
+			response.ok
+				? "Änderungen wurden angefragt."
+				: "Die Änderungsanfrage konnte nicht gesendet werden.",
+		);
 		if (response.ok && historyMode) await refreshSigningState();
 	}
 
@@ -157,7 +165,7 @@ export function SignerPage(props: SignerPageProps) {
 			body: JSON.stringify({ page: field.page, x: field.x, y: field.y }),
 		});
 		if (!response.ok) {
-			setMessage("Unable to move placeholder");
+			setMessage("Das Unterschriftsfeld konnte nicht verschoben werden.");
 			await refreshSigningState();
 		}
 	}
@@ -165,11 +173,11 @@ export function SignerPage(props: SignerPageProps) {
 	return (
 		<PageShell width="wide">
 			<PageHeader
-				title="Review and sign"
+				title="Vertrag prüfen und unterschreiben"
 				lead={
 					historyMode
-						? "Your verified My documents session protects this signing task."
-						: "No account is required for this signing link."
+						? "Du unterschreibst über deinen bestätigten Zugang."
+						: "Prüfe den Vertrag und bestätige ihn mit deiner Unterschrift."
 				}
 			/>
 			{error && (
@@ -177,7 +185,7 @@ export function SignerPage(props: SignerPageProps) {
 					<AlertTitle>{error.message}</AlertTitle>
 					{error.verificationUrl && (
 						<AlertDescription>
-							<TextLink href={error.verificationUrl}>Verify email</TextLink>
+							<TextLink href={error.verificationUrl}>E-Mail-Adresse bestätigen</TextLink>
 						</AlertDescription>
 					)}
 				</Alert>
@@ -186,22 +194,22 @@ export function SignerPage(props: SignerPageProps) {
 				<Panel>
 					<div className="flex flex-wrap items-start justify-between gap-4">
 						<div className="space-y-2">
-							<StatusBadge tone="success">Document complete</StatusBadge>
+							<StatusBadge tone="success">Vertrag abgeschlossen</StatusBadge>
 							<p className="text-pretty text-muted-foreground text-sm">
-								The final document is ready for review and download.
+								Der unterzeichnete Vertrag steht für dich zum Download bereit.
 							</p>
 						</div>
 						<div className="flex flex-wrap gap-3">
 							<Button asChild variant="outline" size="lg">
 								<a href={completedDocument.url}>
 									<FileText aria-hidden="true" className="size-4" />
-									View completed document
+									Unterzeichneten Vertrag ansehen
 								</a>
 							</Button>
 							<Button asChild size="lg">
 								<a href={completedDocument.downloadUrl}>
 									<Download aria-hidden="true" className="size-4" />
-									Download final PDF
+									Unterzeichnete PDF herunterladen
 								</a>
 							</Button>
 						</div>
@@ -210,9 +218,9 @@ export function SignerPage(props: SignerPageProps) {
 			)}
 			{!session && !error && !completedDocument && (
 				<LoadingText boxed>
-					<span className="block font-medium text-foreground">Loading signing session…</span>
+					<span className="block font-medium text-foreground">Vertrag wird geladen…</span>
 					<span className="mt-1 block text-pretty">
-						Fetching the document and assigned signing fields.
+						Dein Vertrag und die Unterschriftsfelder werden vorbereitet.
 					</span>
 				</LoadingText>
 			)}
@@ -230,20 +238,20 @@ export function SignerPage(props: SignerPageProps) {
 					<Panel className="grid gap-3 md:grid-cols-2">
 						{session.fields.length === 0 ? (
 							<div className="space-y-1 md:col-span-2">
-								<p className="font-medium">No assigned fields</p>
+								<p className="font-medium">Keine Unterschriftsfelder vorhanden</p>
 								<p className="text-pretty text-muted-foreground text-sm">
 									{session.signingMode === "only_me"
-										? "This signing link has no signature or date fields assigned."
-										: "Request changes if this document is missing a signature or date field."}
+										? "Für diesen Vertrag sind keine Unterschrifts- oder Datumsfelder vorhanden."
+										: "Bitte fordere eine Änderung an, wenn eine Unterschrift oder ein Datumsfeld fehlt."}
 								</p>
 							</div>
 						) : (
 							session.fields.map((field) => (
 								<div key={field.id} className="rounded-lg border bg-muted/30 p-3">
-									<p className="font-medium capitalize">{field.type}</p>
-									<p className="text-muted-foreground text-sm tabular-nums">
-										Page {field.page}, x {field.x}, y {field.y}, {field.width}x{field.height}
+									<p className="font-medium">
+										{field.type === "signature" ? "Unterschrift" : "Datum"}
 									</p>
+									<p className="text-muted-foreground text-sm tabular-nums">Seite {field.page}</p>
 								</div>
 							))
 						)}
@@ -258,7 +266,7 @@ export function SignerPage(props: SignerPageProps) {
 						<>
 							<form onSubmit={requestChanges} className="grid gap-4 md:grid-cols-3">
 								<div className="space-y-2 md:col-span-2">
-									<Label htmlFor="changeComment">Change request comment</Label>
+									<Label htmlFor="changeComment">Gewünschte Änderung</Label>
 									<Input
 										id="changeComment"
 										value={changeComment}
@@ -274,13 +282,13 @@ export function SignerPage(props: SignerPageProps) {
 										disabled={changeRequested}
 									>
 										<MessageSquare className="h-4 w-4" />
-										Request changes
+										Änderung anfragen
 									</Button>
 								</div>
 							</form>
 							<form onSubmit={declineSigning} className="grid gap-4 md:grid-cols-3">
 								<div className="space-y-2">
-									<Label htmlFor="declineReason">Decline reason</Label>
+									<Label htmlFor="declineReason">Grund für die Ablehnung</Label>
 									<Input
 										id="declineReason"
 										value={reason}
@@ -288,7 +296,7 @@ export function SignerPage(props: SignerPageProps) {
 									/>
 								</div>
 								<div className="space-y-2">
-									<Label htmlFor="declineComment">Comment</Label>
+									<Label htmlFor="declineComment">Kommentar</Label>
 									<Input
 										id="declineComment"
 										value={comment}
@@ -298,7 +306,7 @@ export function SignerPage(props: SignerPageProps) {
 								<div className="flex items-end">
 									<Button type="submit" variant="outline" className="w-full">
 										<X className="h-4 w-4" />
-										Decline
+										Ablehnen
 									</Button>
 								</div>
 							</form>

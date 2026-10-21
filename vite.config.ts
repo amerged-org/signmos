@@ -12,17 +12,17 @@ const config = defineConfig({
 			projects: ["./tsconfig.json"],
 		}),
 		tailwindcss(),
+		cloudflare({
+			viteEnvironment: {
+				name: "ssr",
+			},
+		}),
 		tanstackStart({
 			srcDirectory: "src",
 			start: { entry: "./start.tsx" },
 			server: { entry: "./server.ts" },
 		}),
 		viteReact(),
-		cloudflare({
-			viteEnvironment: {
-				name: "ssr",
-			},
-		}),
 	],
 });
 

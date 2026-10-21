@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import { getArtifactVersionKeys } from "./artifact-versions";
 import {
 	EnvelopeSchema,
 	type EnvelopeStatus,
@@ -207,11 +208,17 @@ async function deleteEnvelope(input: {
 			.where(eq(finalDocuments.envelopeId, input.envelopeId))
 			.limit(100)
 	).map((document) => FinalDocumentSchema.parse(document));
-	for (const key of [
-		...sources.map((document) => document.r2Key),
-		...finals.map((document) => document.r2Key),
-	]) {
-		await input.documentsBucket?.delete(key);
+	const keys = [
+		...new Set([
+			...sources.map((document) => document.r2Key),
+			...finals.map((document) => document.r2Key),
+			...(await getArtifactVersionKeys(input.envelopeId)),
+		]),
+	];
+	if (keys.length > 0) {
+		if (!input.documentsBucket)
+			throw new Error("Private document storage is required for deletion");
+		await input.documentsBucket.delete(keys);
 	}
 
 	await db.update(envelopes).set({ status: "deleted" }).where(eq(envelopes.id, input.envelopeId));

@@ -744,7 +744,7 @@ describe("envelope recipient API", () => {
 		expect(body).toEqual(
 			expect.objectContaining({
 				to: ["grace@example.com"],
-				subject: "Verify your email to sign this document",
+				subject: "Deine Unterschrift wird benötigt · amerged Sign",
 				html: expect.stringContaining("https://signmos.example/signing-verifications/"),
 			}),
 		);
@@ -811,7 +811,7 @@ describe("envelope recipient API", () => {
 				from: "Signmos <sign@signmos.example>",
 				reply_to: "support@signmos.example",
 				to: ["ada@example.com"],
-				subject: "Verify your email to sign this document",
+				subject: "Deine Unterschrift wird benötigt · amerged Sign",
 			}),
 		);
 		expect(requestBody.html).toContain("https://signmos.example/signing-verifications/");
@@ -964,7 +964,7 @@ describe("envelope recipient API", () => {
 		expect(requestBody).toEqual(
 			expect.objectContaining({
 				to: ["ada@example.com"],
-				subject: "Verify your email to sign this document",
+				subject: "Deine Unterschrift wird benötigt · amerged Sign",
 			}),
 		);
 		expect(requestBody.html).toContain("https://signmos.example/signing-verifications/");

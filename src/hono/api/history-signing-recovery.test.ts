@@ -13,6 +13,7 @@ import {
 } from "@/db/envelope";
 import { hashHistoryCredential, historySecurityEvents, historySessions } from "@/db/history-access";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes } from "@/test/pdf-fixtures";
 
 type StoredRow = Record<string, unknown>;
 const envelopeId = "00000000-0000-4000-8000-000000000040";
@@ -154,7 +155,7 @@ async function resetState() {
 	);
 	for (const version of [1, 2]) {
 		const key = `envelopes/${envelopeId}/source-v${version}.pdf`;
-		const bytes = new TextEncoder().encode(`%PDF-1.7 source-v${version}\n%%EOF`);
+		const bytes = pdfFixtureBytes(`source-v${version}`);
 		tableRows("sources").push({
 			id: `10000000-0000-4000-8000-00000000004${version}`,
 			envelopeId,

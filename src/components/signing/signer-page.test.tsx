@@ -8,7 +8,7 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		expect(screen.getByText("Loading signing session…")).toBeTruthy();
+		expect(screen.getByText("Vertrag wird geladen…")).toBeTruthy();
 	});
 
 	it("loads assigned fields and submits typed signing values", async () => {
@@ -66,21 +66,24 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		await screen.findByText("signature");
-		expect(screen.getByRole("link", { name: "Open source PDF" }).getAttribute("href")).toBe(
+		await screen.findByText("Unterschrift");
+		expect(screen.getByRole("link", { name: "PDF öffnen" }).getAttribute("href")).toBe(
 			"/api/signing/valid-token/source-pdf",
 		);
-		expect(screen.getByTitle("Source PDF preview").getAttribute("src")).toBe(
+		expect(screen.getByTitle("Vertragsvorschau").getAttribute("src")).toBe(
 			"/api/signing/valid-token/source-pdf#toolbar=0&navpanes=0&scrollbar=0&page=1",
 		);
-		fireEvent.change(screen.getByLabelText("Typed signature text"), {
+		fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {
 			target: { value: "Ada Lovelace" },
 		});
 		await waitFor(() =>
-			expect(screen.getByLabelText("Typed signature text")).toHaveProperty("value", "Ada Lovelace"),
+			expect(screen.getByLabelText("Dein vollständiger Name")).toHaveProperty(
+				"value",
+				"Ada Lovelace",
+			),
 		);
 		expect(screen.queryByLabelText("Signing date")).toBeNull();
-		fireEvent.click(screen.getByRole("button", { name: "Complete signing" }));
+		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 		expect(fetchMock).toHaveBeenNthCalledWith(
@@ -163,10 +166,10 @@ describe("SignerPage", () => {
 		render(<SignerPage token="valid-token" />);
 
 		expect(
-			(await screen.findByLabelText("Tomasz Kowalczyk signature value")).textContent,
+			(await screen.findByLabelText("Tomasz Kowalczyk · Unterschrift · ausgefüllt")).textContent,
 		).toContain("Tomasz Kowalczyk");
-		expect(screen.getByLabelText("Tom signature placeholder").textContent).toContain(
-			"signature here",
+		expect(screen.getByLabelText("Tom · Unterschrift · Feld").textContent).toContain(
+			"Hier unterschreiben",
 		);
 	});
 
@@ -235,22 +238,22 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		await screen.findByText("signature");
-		expect(screen.getByLabelText("Typed signature text")).toHaveProperty("value", "Ada Saved");
-		expect(screen.getByLabelText("Signature font")).toHaveProperty("value", "serif");
-		const rememberCheckbox = screen.getByLabelText("Remember signature for future envelopes");
+		await screen.findByText("Unterschrift");
+		expect(screen.getByLabelText("Dein vollständiger Name")).toHaveProperty("value", "Ada Saved");
+		expect(screen.getByLabelText("Schriftstil")).toHaveProperty("value", "serif");
+		const rememberCheckbox = screen.getByLabelText("Unterschrift für weitere Verträge merken");
 		expect(rememberCheckbox).toHaveProperty("checked", true);
 
-		fireEvent.click(screen.getByRole("button", { name: "Choose drawn signature" }));
-		expect(screen.getByLabelText("Draw signature pad")).toBeTruthy();
-		expect(screen.queryByLabelText("Typed signature text")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Zeichnen wählen" }));
+		expect(screen.getByLabelText("Unterschrift zeichnen")).toBeTruthy();
+		expect(screen.queryByLabelText("Dein vollständiger Name")).toBeNull();
 
-		fireEvent.click(screen.getByRole("button", { name: "Choose typed signature" }));
+		fireEvent.click(screen.getByRole("button", { name: "Eintippen wählen" }));
 		expect(screen.queryByLabelText("Signing date")).toBeNull();
-		fireEvent.change(screen.getByLabelText("Typed signature text"), {
+		fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {
 			target: { value: "Ada New" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Complete signing" }));
+		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 		expect(fetchMock).toHaveBeenNthCalledWith(
@@ -316,11 +319,11 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		await screen.findByText("signature");
-		fireEvent.change(screen.getByLabelText("Typed signature text"), {
+		await screen.findByText("Unterschrift");
+		fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {
 			target: { value: "Ada Lovelace" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Complete signing" }));
+		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
 		await screen.findByText("No signing fields are assigned to this recipient");
 	});
@@ -350,16 +353,16 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		await screen.findByRole("link", { name: "Open source PDF" });
-		expect(screen.getByText("No assigned fields")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "Complete signing" })).toHaveProperty(
+		await screen.findByRole("link", { name: "PDF öffnen" });
+		expect(screen.getByText("Keine Unterschriftsfelder vorhanden")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Jetzt unterschreiben" })).toHaveProperty(
 			"disabled",
 			true,
 		);
-		fireEvent.change(screen.getByLabelText("Change request comment"), {
+		fireEvent.change(screen.getByLabelText("Gewünschte Änderung"), {
 			target: { value: "Please update the billing address." },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+		fireEvent.click(screen.getByRole("button", { name: "Änderung anfragen" }));
 
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 		expect(fetchMock).toHaveBeenLastCalledWith(
@@ -370,12 +373,12 @@ describe("SignerPage", () => {
 				body: JSON.stringify({ comment: "Please update the billing address." }),
 			}),
 		);
-		await screen.findByText("Changes requested");
-		expect(screen.getByRole("button", { name: "Complete signing" })).toHaveProperty(
+		await screen.findByText("Änderungen wurden angefragt.");
+		expect(screen.getByRole("button", { name: "Jetzt unterschreiben" })).toHaveProperty(
 			"disabled",
 			true,
 		);
-		expect(screen.getByRole("button", { name: "Request changes" })).toHaveProperty(
+		expect(screen.getByRole("button", { name: "Änderung anfragen" })).toHaveProperty(
 			"disabled",
 			true,
 		);
@@ -399,9 +402,9 @@ describe("SignerPage", () => {
 		render(<SignerPage token="valid-token" />);
 
 		await screen.findByText("Partner email verification is required before signing");
-		expect(screen.getByRole("link", { name: "Verify email" }).getAttribute("href")).toBe(
-			"/api/signing/verifications/valid-token",
-		);
+		expect(
+			screen.getByRole("link", { name: "E-Mail-Adresse bestätigen" }).getAttribute("href"),
+		).toBe("/api/signing/verifications/valid-token");
 	});
 
 	it("shows completed document links when a signing link is already complete", async () => {
@@ -422,14 +425,14 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		await screen.findByText("Document complete");
-		expect(screen.getByRole("link", { name: "View completed document" }).getAttribute("href")).toBe(
-			"/completed-documents/90000000-0000-4000-8000-000000000001",
-		);
-		expect(screen.getByRole("link", { name: "Download final PDF" }).getAttribute("href")).toBe(
-			"/api/final-documents/90000000-0000-4000-8000-000000000001/pdf",
-		);
-		expect(screen.queryByRole("button", { name: "Complete signing" })).toBeNull();
+		await screen.findByText("Vertrag abgeschlossen");
+		expect(
+			screen.getByRole("link", { name: "Unterzeichneten Vertrag ansehen" }).getAttribute("href"),
+		).toBe("/completed-documents/90000000-0000-4000-8000-000000000001");
+		expect(
+			screen.getByRole("link", { name: "Unterzeichnete PDF herunterladen" }).getAttribute("href"),
+		).toBe("/api/final-documents/90000000-0000-4000-8000-000000000001/pdf");
+		expect(screen.queryByRole("button", { name: "Jetzt unterschreiben" })).toBeNull();
 	});
 
 	it("shows an expired signing-link message without signing controls", async () => {
@@ -449,8 +452,8 @@ describe("SignerPage", () => {
 		render(<SignerPage token="valid-token" />);
 
 		await screen.findByText("This signing link is no longer active");
-		expect(screen.queryByRole("button", { name: "Complete signing" })).toBeNull();
-		expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Jetzt unterschreiben" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Änderung anfragen" })).toBeNull();
 	});
 
 	it("shows a deleted document message without PDF or signing controls", async () => {
@@ -470,9 +473,9 @@ describe("SignerPage", () => {
 		render(<SignerPage token="valid-token" />);
 
 		await screen.findByText("This document was deleted by the sender");
-		expect(screen.queryByRole("link", { name: "Open source PDF" })).toBeNull();
-		expect(screen.queryByTitle("Source PDF preview")).toBeNull();
-		expect(screen.queryByRole("button", { name: "Complete signing" })).toBeNull();
-		expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+		expect(screen.queryByRole("link", { name: "PDF öffnen" })).toBeNull();
+		expect(screen.queryByTitle("Vertragsvorschau")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Jetzt unterschreiben" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Änderung anfragen" })).toBeNull();
 	});
 });

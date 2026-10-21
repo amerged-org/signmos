@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import { validateSourcePdf } from "./pdf-policy";
 import { EnvelopeSchema, type SourceDocument, SourceDocumentSchema } from "./schema";
 import {
 	auditEvents,
@@ -75,6 +76,7 @@ export async function uploadSourcePdfDocument(
 	}
 
 	const version = revision ? nextVersion(existingDocuments) : 1;
+	await validateSourcePdf(input.bytes);
 	const r2Key = `envelopes/${input.envelopeId}/source-v${version}.pdf`;
 	await input.documentsBucket.put(r2Key, input.bytes, {
 		httpMetadata: { contentType: input.contentType },

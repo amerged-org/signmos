@@ -10,6 +10,7 @@ import {
 } from "@/db/envelope";
 import { hashHistoryCredential, historySecurityEvents, historySessions } from "@/db/history-access";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes } from "@/test/pdf-fixtures";
 
 type StoredRow = Record<string, unknown>;
 
@@ -125,7 +126,7 @@ async function resetState() {
 		r2Key: sourceKey,
 		version: 1,
 		sha256: "a".repeat(64),
-		byteSize: 20,
+		byteSize: pdfFixtureBytes("source").byteLength,
 		contentType: "application/pdf",
 		originalFilename: "Creator contract.pdf",
 		uploadedBy: "creator@example.com",
@@ -141,7 +142,7 @@ async function resetState() {
 		createdAt: new Date("2026-07-16T09:00:00.000Z"),
 	});
 	state.r2Objects = new Map([
-		[sourceKey, new TextEncoder().encode("%PDF-1.7 source\n%%EOF")],
+		[sourceKey, pdfFixtureBytes("source")],
 		[finalKey, new TextEncoder().encode("%PDF-1.7 final\n%%EOF")],
 	]);
 	state.deletedKeys = [];
@@ -166,9 +167,11 @@ const bucket = {
 		const bytes = state.r2Objects.get(key);
 		return bytes ? { arrayBuffer: async () => bytes.buffer } : null;
 	},
-	delete: async (key: string) => {
-		state.deletedKeys.push(key);
-		state.r2Objects.delete(key);
+	delete: async (keys: string | string[]) => {
+		for (const key of Array.isArray(keys) ? keys : [keys]) {
+			state.deletedKeys.push(key);
+			state.r2Objects.delete(key);
+		}
 	},
 };
 

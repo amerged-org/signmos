@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_DOCUMENT_FIELDS, MAX_SOURCE_PDF_PAGES } from "./pdf-policy-limits";
 import {
 	envelopeStatuses,
 	fieldTypes,
@@ -325,7 +326,6 @@ export const CompleteSigningSignatureSchema = z.discriminatedUnion("kind", [
 	}),
 ]);
 export type CompleteSigningSignature = z.infer<typeof CompleteSigningSignatureSchema>;
-
 export const CompleteSigningRequestSchema = z
 	.object({
 		signatureName: z.string().trim().min(1).optional(),
@@ -405,7 +405,7 @@ export type FieldValue = z.infer<typeof FieldValueSchema>;
 export const FieldCreateSchema = z.object({
 	recipientId: z.string().uuid(),
 	type: FieldTypeSchema,
-	page: z.number().int().min(1),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 	width: z.number().int().positive(),
@@ -414,13 +414,13 @@ export const FieldCreateSchema = z.object({
 export type FieldCreateInput = z.infer<typeof FieldCreateSchema>;
 
 export const AddFieldsRequestSchema = z.object({
-	fields: z.array(FieldCreateSchema).min(1),
+	fields: z.array(FieldCreateSchema).min(1).max(MAX_DOCUMENT_FIELDS),
 });
 export type AddFieldsRequest = z.infer<typeof AddFieldsRequestSchema>;
 
 export const DefaultFieldPlacementRequestSchema = z.object({
 	recipientIds: z.array(z.string().uuid()).min(1).max(10),
-	page: z.number().int().min(1).optional().default(1),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).optional().default(1),
 });
 export type DefaultFieldPlacementRequest = z.infer<typeof DefaultFieldPlacementRequestSchema>;
 

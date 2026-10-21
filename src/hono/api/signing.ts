@@ -21,16 +21,18 @@ import {
 	SigningCompletionBlockedError,
 	SigningFieldPlacementBlockedError,
 	SigningFieldPlacementNotFoundError,
+	SigningFinalizationError,
 	SigningNoAssignedFieldsError,
 	updateSignerFieldPlacement,
 	verifyPartnerToken,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import { createHono } from "@/hono/factory";
 
 const signingEndpoint = createHono();
 
 const SigningFieldPlacementRequestSchema = z.object({
-	page: z.number().int().min(1).optional(),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).optional(),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 });
@@ -215,6 +217,19 @@ signingEndpoint.post("/:token/complete", async (c) => {
 			}),
 		});
 	} catch (error) {
+		if (error instanceof SigningFinalizationError) {
+			return c.json(
+				{
+					error: {
+						code: error.code,
+						message: error.message,
+						retryable: true,
+						allowedActions: ["retry_completion"],
+					},
+				},
+				503,
+			);
+		}
 		if (error instanceof EmailDeliveryError) {
 			return c.json(emailDeliveryErrorBody(error, c.env as EmailDeliveryEnv | undefined), 502);
 		}
