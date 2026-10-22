@@ -90,8 +90,8 @@ export async function completeSigning(
 	const recipients = context.recipients;
 	const signingRecipient = recipients.find((recipient) => recipient.id === token.recipientId);
 	if (!signingRecipient) throw new SigningCompletionBlockedError("sent");
-	if (signingRecipient.status === "completed")
-		return resumeRecordedSigning(
+	if (signingRecipient.status === "completed") {
+		const result = await resumeRecordedSigning(
 			token,
 			signature.fieldValue,
 			fields,
@@ -102,19 +102,13 @@ export async function completeSigning(
 			parsedEnvelope.createdBy,
 			signingRecipient.email,
 		);
+		if (!sameEmail(signingRecipient.email, parsedEnvelope.createdBy))
+			await notifySenderSigned(token, parsedEnvelope.createdBy, signingRecipient.name, options);
+		return result;
+	}
 	if (signingRecipient.status !== "sent") throw new SigningCompletionBlockedError("sent");
 	const senderNotificationUrl = buildSenderSigningNotificationUrl(token.envelopeId);
 	const shouldNotifySender = !sameEmail(signingRecipient.email, parsedEnvelope.createdBy);
-	if (shouldNotifySender && options.emailDelivery) {
-		await deliverTransactionalEmail(
-			buildSenderPartnerSignedEmail({
-				email: parsedEnvelope.createdBy,
-				signerName: signingRecipient.name,
-				statusUrl: toAbsoluteDeliveryUrl(senderNotificationUrl, options.emailDelivery),
-			}),
-			options.emailDelivery,
-		);
-	}
 
 	const writes: SigningBatchQuery[] = [
 		signingStatement(sql`select id from envelopes where id = ${token.envelopeId} for update`),
@@ -198,6 +192,9 @@ export async function completeSigning(
 		parsedEnvelope.createdBy,
 		signingRecipient.email,
 	);
+	// Only now is the signature stored; the owner mail is a courtesy that must never block it.
+	if (shouldNotifySender)
+		await notifySenderSigned(token, parsedEnvelope.createdBy, signingRecipient.name, options);
 
 	return {
 		envelopeId: token.envelopeId,
@@ -205,6 +202,39 @@ export async function completeSigning(
 		recipientStatus: "completed",
 		envelopeStatus,
 	};
+}
+
+/**
+ * Tell the owner that a signer signed, after the signature is durable. A mail refusal (daily
+ * send limit, suspended sender, unpaid workspace, timeout) must not undo, block or repeat the
+ * signing, so it is swallowed. The failure is not recorded: the flow already uses all ten private
+ * calls a Worker may make, so a recording insert would be the eleventh. The message is a pure
+ * function of the owner, the signer and the status link, so its content-derived idempotency key
+ * makes a repeated call a gateway replay instead of a second mail.
+ */
+async function notifySenderSigned(
+	token: SignerToken,
+	owner: string,
+	signerName: string,
+	options: { emailDelivery?: EmailDeliveryOptions },
+): Promise<void> {
+	const delivery = options.emailDelivery;
+	if (!delivery) return;
+	try {
+		await deliverTransactionalEmail(
+			buildSenderPartnerSignedEmail({
+				email: owner,
+				signerName,
+				statusUrl: toAbsoluteDeliveryUrl(
+					buildSenderSigningNotificationUrl(token.envelopeId),
+					delivery,
+				),
+			}),
+			delivery,
+		);
+	} catch {
+		// Best effort: the owner sees the completed contract in the console either way.
+	}
 }
 
 async function persistSigningCompletion(

@@ -22,6 +22,8 @@ let tombstones: Set<string>;
 let failErasure = false;
 let calls: { query: number; transaction: number; files: number; mail: number };
 let beforeMail: (() => Promise<void>) | undefined;
+let beforeSave: (() => Promise<void>) | undefined;
+let mailAnswer: (() => Response) | undefined;
 let beforePut: (() => Promise<void>) | undefined;
 let beforeGet: (() => Promise<void>) | undefined;
 let statements: CustomerDatabaseQuery[];
@@ -53,6 +55,12 @@ const binding: CustomerDatabaseBinding = {
 		calls.transaction += 1;
 		const queries = raw as CustomerDatabaseQuery[];
 		expect(queries.length).toBeLessThanOrEqual(25);
+		if (beforeSave) {
+			// Something changes between the request's reads and its first write.
+			const change = beforeSave;
+			beforeSave = undefined;
+			await change();
+		}
 		statements.push(...queries);
 		try {
 			return await postgres.transaction(async (transaction) => {
@@ -104,6 +112,7 @@ const env = {
 		fetch: async () => {
 			calls.mail += 1;
 			await beforeMail?.();
+			if (mailAnswer) return mailAnswer();
 			return Response.json(
 				{
 					state: "accepted",
@@ -148,6 +157,8 @@ beforeEach(async () => {
 	tombstones = new Set();
 	failErasure = false;
 	beforeMail = undefined;
+	beforeSave = undefined;
+	mailAnswer = undefined;
 	beforePut = undefined;
 	beforeGet = undefined;
 	const pdf = await PDFDocument.create();
@@ -286,7 +297,7 @@ it.each([
 		if (scenario.startsWith("expired"))
 			await postgres.exec("UPDATE envelopes SET status='expired'");
 	};
-	if (scenario.endsWith("save")) beforeMail = change;
+	if (scenario.endsWith("save")) beforeSave = change;
 	else beforePut = change;
 	const response = await complete(true);
 	expect(response.status).toBe(scenario.endsWith("save") ? 409 : 503);
@@ -322,7 +333,7 @@ it.each([
 			statements = originalStatements;
 		}
 	};
-	if (scenario === "before-manifest") beforeMail = erase;
+	if (scenario === "before-manifest") beforeSave = erase;
 	if (scenario === "after-manifest") beforePut = erase;
 	if (scenario === "failed-erasure") {
 		failErasure = true;
@@ -462,4 +473,77 @@ it("does not let an old signing link decline an already completed contract", asy
 	expect((await postgres.query("SELECT status FROM envelope_recipients")).rows).toEqual([
 		{ status: "completed" },
 	]);
+});
+
+const mailRefusals: Array<[string, number, string]> = [
+	["daily send limit", 429, "mail_send_daily_limit"],
+	["suspended sender", 423, "mail_reputation_suspended"],
+	["unpaid workspace", 402, "paid_plan_required"],
+	["gateway outage", 503, "mail_gateway_unavailable"],
+];
+
+it.each(
+	mailRefusals,
+)("stores the signature and the final PDF although the owner mail is refused: %s", async (_name, status, code) => {
+	mailAnswer = () => Response.json({ code }, { status });
+	const response = await complete();
+	expect(await response.json()).toMatchObject({ data: { envelopeStatus: "completed" } });
+	expect(response.status).toBe(200);
+	expect(calls.mail).toBe(1);
+	expect(count()).toBeLessThanOrEqual(10);
+	expect((await postgres.query("SELECT status FROM envelopes")).rows).toEqual([
+		{ status: "completed" },
+	]);
+	expect(
+		(await postgres.query("SELECT count(*)::integer AS count FROM field_values")).rows,
+	).toEqual([{ count: 2 }]);
+	expect(
+		(await postgres.query("SELECT count(*)::integer AS count FROM final_documents")).rows,
+	).toEqual([{ count: 1 }]);
+});
+
+it("tells the owner only after the signature and the final PDF are stored", async () => {
+	let stored: unknown;
+	beforeMail = async () => {
+		stored = {
+			values: (await postgres.query("SELECT count(*)::integer AS count FROM field_values")).rows,
+			documents: (await postgres.query("SELECT count(*)::integer AS count FROM final_documents"))
+				.rows,
+			envelope: (await postgres.query("SELECT status FROM envelopes")).rows,
+		};
+	};
+	expect((await complete()).status).toBe(200);
+	expect(stored).toEqual({
+		values: [{ count: 2 }],
+		documents: [{ count: 1 }],
+		envelope: [{ status: "completed" }],
+	});
+	expect(calls.mail).toBe(1);
+});
+
+it("sends no owner mail for a signature that was not stored", async () => {
+	beforeSave = async () => {
+		await postgres.exec("UPDATE signer_tokens SET status='revoked'");
+	};
+	expect((await complete()).status).toBe(409);
+	expect(calls.mail).toBe(0);
+	expect(
+		(await postgres.query("SELECT count(*)::integer AS count FROM field_values")).rows,
+	).toEqual([{ count: 0 }]);
+	expect(
+		(await postgres.query("SELECT count(*)::integer AS count FROM email_send_records")).rows,
+	).toEqual([{ count: 0 }]);
+});
+
+it("notifies the owner once the retried completion finishes the PDF, never before", async () => {
+	beforePut = async () => {
+		throw new Error("Upload uncertain");
+	};
+	expect((await complete()).status).toBe(503);
+	expect(calls.mail).toBe(0);
+	beforePut = undefined;
+	resetCalls();
+	expect((await complete()).status).toBe(200);
+	expect(calls.mail).toBe(1);
+	expect(count()).toBeLessThanOrEqual(10);
 });
