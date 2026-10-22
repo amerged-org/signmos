@@ -31,7 +31,9 @@ export function createOmhDocumentsBucket(env: OmhStorageEnv): R2Bucket {
 			const response = await fetch(
 				new Request(capability.url, {
 					headers: capability.requiredHeaders,
-					redirect: "error",
+					// Workers construct only "follow" and "manual"; "error" throws before any request.
+					// A redirect answer is a 3xx, which is not ok and is refused below, never followed.
+					redirect: "manual",
 					signal: AbortSignal.timeout(30_000),
 				}),
 			);

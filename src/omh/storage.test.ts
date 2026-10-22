@@ -11,6 +11,19 @@ vi.mock("@ohmyhost/customer-runtime/storage", () => ({
 	createPrivateStorageClient: boundary.createClient,
 }));
 
+/** workerd constructs a Request only for redirect "follow" or "manual"; Node also accepts "error". */
+function stubWorkersRequestConstructor() {
+	const NodeRequest = Request;
+	class WorkersRequest extends NodeRequest {
+		constructor(input: RequestInfo | URL, init?: RequestInit) {
+			if (init?.redirect === "error")
+				throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+			super(input, init);
+		}
+	}
+	vi.stubGlobal("Request", WorkersRequest);
+}
+
 const env: OmhStorageEnv = {
 	OHMYHOST_STORAGE_GATEWAY: { fetch: vi.fn() },
 	OHMYHOST_STORAGE_GATEWAY_URL: "https://private-storage.invalid",
@@ -38,6 +51,7 @@ describe("OMH private document storage", () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	it("fetches authorized private bytes server-side and preserves a streaming response", async () => {
+		stubWorkersRequestConstructor();
 		const fetchObject = vi.fn().mockResolvedValue(
 			new Response("contract", {
 				headers: { "content-type": "application/pdf", etag: '"version-one"' },
@@ -60,6 +74,7 @@ describe("OMH private document storage", () => {
 		expect(object?.bodyUsed).toBe(true);
 		expect(boundary.read).toHaveBeenCalledWith("envelopes/one/source-v1.pdf");
 		const request = fetchObject.mock.calls[0]?.[0] as Request;
+		expect(request.redirect).toBe("manual");
 		expect(request.headers.get("x-object-proof")).toBe("proof");
 		expect(request.headers.get("authorization")).toBeNull();
 		expect(boundary.createClient).toHaveBeenCalledWith(
@@ -70,6 +85,25 @@ describe("OMH private document storage", () => {
 				environmentId: env.OHMYHOST_ENVIRONMENT_ID,
 			}),
 		);
+	});
+
+	it("refuses a redirecting signed URL instead of following it", async () => {
+		stubWorkersRequestConstructor();
+		const fetchObject = vi
+			.fn()
+			.mockResolvedValue(
+				new Response(null, { status: 302, headers: { location: "https://elsewhere.invalid/" } }),
+			);
+		vi.stubGlobal("fetch", fetchObject);
+		boundary.read.mockResolvedValue({
+			url: "https://signed-storage.invalid/private-object?signature=secret",
+			requiredHeaders: {},
+			expectedContentLength: null,
+		});
+		await expect(createOmhDocumentsBucket(env).get("contract.pdf")).rejects.toThrow(
+			"Private document read failed",
+		);
+		expect(fetchObject).toHaveBeenCalledOnce();
 	});
 
 	it("maps an authoritative missing object to null and propagates storage failures", async () => {
