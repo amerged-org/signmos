@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName } from "pdf-lib";
 import { prepareContractPdf } from "./contracts-pdf";
 import { type CreateContractRequest, CreateContractSchema } from "./contracts-schema";
 
@@ -16,7 +16,38 @@ async function request(
 	};
 }
 
+/** A valid PDF of roughly `size` bytes whose stream carries every byte value, uncompressed. */
+async function binaryPdf(size: number): Promise<Uint8Array> {
+	const pdf = await PDFDocument.create();
+	pdf.addPage([420, 595]);
+	const payload = new Uint8Array(size);
+	for (let index = 0; index < size; index += 1) payload[index] = (index * 31 + 7) & 0xff;
+	pdf.catalog.set(PDFName.of("SignPayload"), pdf.context.register(pdf.context.stream(payload)));
+	return pdf.save({ useObjectStreams: false });
+}
+
 describe("contract PDF preparation", () => {
+	it("decodes a near-maximum binary PDF byte for byte into its own exactly sized buffer", async () => {
+		const original = await binaryPdf(2_000_000);
+		expect(original.byteLength).toBeLessThanOrEqual(2 * 1024 * 1024);
+		const input = await request([
+			{ type: "signature", page: 1, x: 72, y: 320, width: 280, height: 70 },
+		]);
+		input.pdf.base64 = Buffer.from(original).toString("base64");
+		const result = await prepareContractPdf(input);
+		expect(Buffer.from(result.bytes).equals(Buffer.from(original))).toBe(true);
+		expect(result.bytes.byteOffset).toBe(0);
+		expect(result.bytes.buffer.byteLength).toBe(original.byteLength);
+	});
+	it("rejects an oversized upload from its base64 length, before decoding it", async () => {
+		const input = await request();
+		input.pdf.base64 = "A".repeat(2_796_208);
+		await expect(prepareContractPdf(input)).rejects.toMatchObject({
+			code: "SOURCE_PDF_TOO_LARGE",
+			status: 413,
+		});
+	});
+
 	it("retains original page size and adds a dedicated signature page by default", async () => {
 		const result = await prepareContractPdf(await request());
 		const pdf = await PDFDocument.load(result.bytes);

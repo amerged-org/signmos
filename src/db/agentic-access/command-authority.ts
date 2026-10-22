@@ -140,8 +140,10 @@ function existingClaim(
 function stableJson(value: unknown): string {
 	if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
 	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+	// Code-unit order: localeCompare initializes ICU, which costs 10-40 ms of a Worker's 50 ms
+	// CPU on a cold isolate, and the canonical form must not depend on a locale anyway.
 	const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
-		left.localeCompare(right),
+		left < right ? -1 : left > right ? 1 : 0,
 	);
 	return `{${entries.map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`).join(",")}}`;
 }

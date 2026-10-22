@@ -73,15 +73,12 @@ function decodePdf(base64: string): Uint8Array {
 			"pdf.base64 must contain standard base64 without a data URL prefix",
 		);
 	}
-	let decoded: string;
-	try {
-		decoded = atob(base64);
-	} catch {
-		throw new ContractError("INVALID_SOURCE_PDF", "Invalid PDF base64");
-	}
-	if (decoded.length > MAX_CONTRACT_PDF_BYTES)
+	const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+	if ((base64.length / 4) * 3 - padding > MAX_CONTRACT_PDF_BYTES)
 		throw new ContractError("SOURCE_PDF_TOO_LARGE", "The source PDF must be at most 2 MiB", 413);
-	const bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+	// A Worker has 50 ms of CPU per request: a per-byte callback over 2 MiB costs about 90 ms,
+	// the native decoder about 1 ms. The copy gives the bytes their own exactly sized buffer.
+	const bytes = new Uint8Array(Buffer.from(base64, "base64"));
 	if (!isPdf(bytes)) throw new ContractError("INVALID_SOURCE_PDF", "Source document must be a PDF");
 	return bytes;
 }

@@ -326,10 +326,15 @@ function buildHistory(
 	const recipientNameById = new Map(
 		context.recipients.map((recipient) => [recipient.id, recipient.name]),
 	);
-	return context.events
-		.map((event) => toPublicHistoryEvent(event as Record<string, unknown>, recipientNameById))
-		.filter((event): event is CompletedDocumentHistoryEvent => Boolean(event))
-		.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+	return (
+		context.events
+			.map((event) => toPublicHistoryEvent(event as Record<string, unknown>, recipientNameById))
+			.filter((event): event is CompletedDocumentHistoryEvent => Boolean(event))
+			// ISO timestamps order by code unit; localeCompare would initialize ICU for no gain.
+			.sort((left, right) =>
+				left.occurredAt < right.occurredAt ? -1 : left.occurredAt > right.occurredAt ? 1 : 0,
+			)
+	);
 }
 
 function toPublicHistoryEvent(

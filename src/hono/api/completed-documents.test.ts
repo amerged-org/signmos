@@ -264,6 +264,22 @@ describe("completed document access", () => {
 		expect(serialized).not.toContain("partner.link.expired");
 	});
 
+	it("orders the public history by timestamp without initializing the locale collator", async () => {
+		// ISO timestamps order by code unit. localeCompare would initialize ICU, which costs CPU on a
+		// cold Worker isolate that has 50 ms for the whole request.
+		state.auditEvents.reverse();
+		const collator = vi.spyOn(String.prototype, "localeCompare");
+		try {
+			const response = await apiHono.request(`/api/final-documents/${finalDocumentToken}`);
+			expect(response.status).toBe(200);
+			const body = (await response.json()) as { data: { history: Array<{ type: string }> } };
+			expect(body.data.history.map((event) => event.type)).toEqual(["sent", "viewed", "signed"]);
+			expect(collator).not.toHaveBeenCalled();
+		} finally {
+			collator.mockRestore();
+		}
+	});
+
 	it("filters every My documents technical event while retaining normal lifecycle history", async () => {
 		state.auditEvents.push(
 			...historySecurityEventTypes.map((eventType, index) => ({
