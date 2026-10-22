@@ -188,6 +188,40 @@ describe("renderFinalPdf", () => {
 		await expect(isCurrentFinalPdfArtifact(first)).resolves.toBe(true);
 	});
 
+	it("recognizes the current renderer from the saved bytes without parsing the PDF", async () => {
+		const sourceBytes = await sourcePdfBytes();
+		const current = await renderFinalPdf({
+			envelopeId: "00000000-0000-4000-8000-000000000001",
+			sourceDocument: await sourceDocumentFixture(),
+			sourceBytes,
+			certificateHash: "b".repeat(64),
+			rows: { fields: [], values: [], events: [] },
+		});
+		const parse = vi.spyOn(PDFDocument, "load");
+		try {
+			await expect(isCurrentFinalPdfArtifact(current)).resolves.toBe(true);
+			// A view into a larger buffer, as a streamed response body would be.
+			const padded = new Uint8Array(current.byteLength + 7);
+			padded.set(current, 3);
+			await expect(
+				isCurrentFinalPdfArtifact(padded.subarray(3, 3 + current.byteLength)),
+			).resolves.toBe(true);
+			expect(parse).not.toHaveBeenCalled();
+		} finally {
+			parse.mockRestore();
+		}
+		const legacy = await PDFDocument.load(current);
+		legacy.setProducer("amerged-sign-final-pdf-renderer/3");
+		await expect(
+			isCurrentFinalPdfArtifact(await legacy.save({ useObjectStreams: false })),
+		).resolves.toBe(false);
+		await expect(isCurrentFinalPdfArtifact(sourceBytes)).resolves.toBe(false);
+		await expect(isCurrentFinalPdfArtifact(new TextEncoder().encode("not a pdf"))).resolves.toBe(
+			false,
+		);
+		await expect(isCurrentFinalPdfArtifact(new Uint8Array())).resolves.toBe(false);
+	});
+
 	it("keeps certificate and artifact versions stable when PostgreSQL returns rows in a different order", async () => {
 		const sourceDocument = await sourceDocumentFixture();
 		const rows = {

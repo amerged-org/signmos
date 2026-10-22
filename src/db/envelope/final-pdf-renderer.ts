@@ -1,4 +1,4 @@
-import { PDFDocument, type PDFFont, type PDFPage, rgb, StandardFonts } from "pdf-lib";
+import { type PDFDocument, type PDFFont, type PDFPage, rgb, StandardFonts } from "pdf-lib";
 import { assertPdfFieldCount, loadValidatedSourcePdf } from "./pdf-policy";
 import type { SourceDocument } from "./schema";
 
@@ -47,13 +47,29 @@ export async function renderFinalPdf(input: {
 	return pdf.save({ useObjectStreams: false });
 }
 
-export async function isCurrentFinalPdfArtifact(bytes: Uint8Array): Promise<boolean> {
-	try {
-		const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
-		return pdf.getProducer() === FINAL_PDF_RENDERER_PRODUCER;
-	} catch {
-		return false;
-	}
+/**
+ * pdf-lib saves the Info dictionary uncompressed (useObjectStreams: false) and writes the
+ * Producer as a UTF-16BE hex string; a literal string is accepted as well.
+ */
+const CURRENT_PRODUCER_MARKERS = [
+	Buffer.from(`/Producer (${FINAL_PDF_RENDERER_PRODUCER})`, "latin1"),
+	Buffer.from(
+		`/Producer <FEFF${[...FINAL_PDF_RENDERER_PRODUCER]
+			.map((character) => character.charCodeAt(0).toString(16).padStart(4, "0"))
+			.join("")
+			.toUpperCase()}>`,
+		"latin1",
+	),
+];
+
+/**
+ * Whether the stored final PDF was written by the current renderer. Every public download asks,
+ * and a full pdf-lib parse only to read one string costs CPU in proportion to the object count
+ * (about 60 ms at 2,000 objects, against a Worker's 50 ms): search the bytes natively instead.
+ */
+export function isCurrentFinalPdfArtifact(bytes: Uint8Array): Promise<boolean> {
+	const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	return Promise.resolve(CURRENT_PRODUCER_MARKERS.some((marker) => buffer.includes(marker)));
 }
 
 export function buildCertificateMaterial(
