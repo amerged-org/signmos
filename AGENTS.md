@@ -1,4 +1,4 @@
-> amerged Sign fork: production hosting is ohmyho.st, not an upstream Wrangler deployment. Follow `plans/amerged-sign-omh-prd.md`, `ohmyhost.yaml` and `docs/contracts-api.md`. `src/server.ts` wraps requests with lazy `withDatabase(env, callback)` and administrator authorization; the private OMH Drizzle driver replaces Neon HTTP. Files and transactional mail use the private OMH runtime clients. The upstream Wrangler environments, direct-deployment script and historical release evidence are retained reference material and must not be used to publish this fork. Never deploy to the upstream signmos.com hostname.
+> amerged Sign fork: production hosting is ohmyho.st, not an upstream Wrangler deployment. Follow `plans/amerged-sign-omh-prd.md`, `ohmyhost.yaml` and `docs/contracts-api.md`. The global request middleware (`src/omh/hosted-middleware.ts`, registered in `src/start.tsx`) wraps requests with lazy `withDatabase(env, callback)` and administrator authorization; the private OMH Drizzle driver replaces Neon HTTP. Files and transactional mail use the private OMH runtime clients. The upstream Wrangler environments, direct-deployment script and historical release evidence are retained reference material and must not be used to publish this fork. Never deploy to the upstream signmos.com hostname.
 
 # signmos Agent Map
 
@@ -47,7 +47,7 @@ Open issue state changes, so do not hardcode issue status from memory.
 - Agentic browser/token routes and Bearer API: `src/hono/api/agentic.ts`, `src/hono/api/agent-v1*.ts`
 - Public Agent guidance/OpenAPI: `src/hono/public-agent-*.ts`
 - Agentic UI: `src/routes/agentic-*.tsx`, `src/components/agentic/*`
-- Worker entry and API/app routing: `src/server.ts`
+- API/app routing and the hosted request middleware: `src/omh/hosted-request.ts`, `src/omh/hosted-middleware.ts` (no custom Worker entry; the ohmyho.st build uses TanStack Start's default entry)
 - Field placement UI: `src/routes/envelope-fields.tsx`, `src/components/envelopes/*`
 - Signer UI and manual smoke path: `src/routes/signing.$token.tsx`, `src/routes/manual-signing-smoke.tsx`, `src/components/signing/*`
 - My Documents UI: `src/routes/my-documents*.tsx`, `src/routes/history-access.$credential.tsx`, `src/components/history/*`

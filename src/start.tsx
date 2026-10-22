@@ -1,15 +1,5 @@
 import { createCsrfMiddleware, createStart } from "@tanstack/react-start";
-
-declare module "@tanstack/react-start" {
-	interface Register {
-		server: {
-			requestContext: {
-				fromFetch: boolean;
-				turnstileSiteKey?: string;
-			};
-		};
-	}
-}
+import { hostedRequestMiddleware } from "@/omh/hosted-middleware";
 
 const csrfMiddleware = createCsrfMiddleware({
 	filter: (ctx) => ctx.handlerType === "serverFn",
@@ -18,7 +8,8 @@ const csrfMiddleware = createCsrfMiddleware({
 export const startInstance = createStart(() => {
 	return {
 		defaultSsr: true,
-		requestMiddleware: [csrfMiddleware],
+		// The hosted gate runs first: it answers /api and denies unauthenticated pages itself.
+		requestMiddleware: [hostedRequestMiddleware, csrfMiddleware],
 	};
 });
 

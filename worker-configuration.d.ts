@@ -16,7 +16,7 @@ interface __BaseEnv_BaseEnv {
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
-		mainModule: typeof import("./src/server");
+		mainModule: typeof import("@tanstack/react-start/server-entry");
 	}
 	interface StagingEnv {
 		DOCUMENTS_BUCKET: R2Bucket;

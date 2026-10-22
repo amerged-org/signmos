@@ -5,7 +5,8 @@
 		"@radix-ui/react-dropdown-menu",
 		"@radix-ui/react-dialog",
 		"@radix-ui/react-collapsible",
-		"web-vitals"
+		"web-vitals",
+		"cloudflare"
 	],
 	"ignoreBinaries": ["ohmyhost"],
 	"ignore": ["src/components/ui/**", "src/core/errors.ts", "src/db/**"]
