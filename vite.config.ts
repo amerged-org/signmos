@@ -16,6 +16,11 @@ const config = defineConfig({
 			viteEnvironment: {
 				name: "ssr",
 			},
+			// The ohmyho.st build checks the generated Worker config key by key. Wrangler 4.151 adds
+			// an empty `k2` list that its allow-list does not know yet.
+			config: (workerConfig) => {
+				delete (workerConfig as { k2?: unknown }).k2;
+			},
 		}),
 		tanstackStart({
 			srcDirectory: "src",
@@ -23,6 +28,18 @@ const config = defineConfig({
 		}),
 		viteReact(),
 	],
+	environments: {
+		// Source maps of the Worker bundle are not part of the deployable output (the ohmyho.st
+		// packaging refuses *.map files under dist/server); the plugin otherwise emits them.
+		ssr: {
+			build: {
+				sourcemap: false,
+				// The packaging also scans the Worker text for "<prefix>/assets/" references. pdf-lib's
+				// JSDoc examples (https://pdf-lib.js.org/assets/...) match; they are not code.
+				rolldownOptions: { output: { comments: { jsdoc: false } } },
+			},
+		},
+	},
 });
 
 export default config;
