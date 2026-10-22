@@ -37,9 +37,16 @@ export function useNoncePositionStyle(
 	};
 }
 
+/**
+ * The hosting wrapper and TanStack Router publish the request nonce as
+ * <meta property="csp-nonce">; styles created in the browser need it or the CSP blocks them.
+ */
 function documentNonce(): string | undefined {
 	if (typeof document === "undefined") return undefined;
-	return document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]')?.content || undefined;
+	const meta =
+		document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]') ??
+		document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]');
+	return meta?.content || undefined;
 }
 
 function positiveDimension(value: number): number {

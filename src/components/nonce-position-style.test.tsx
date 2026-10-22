@@ -25,14 +25,18 @@ function PositionedField({
 
 afterEach(() => {
 	cleanup();
-	document.querySelector('meta[name="csp-nonce"]')?.remove();
+	for (const meta of document.querySelectorAll(
+		'meta[name="csp-nonce"], meta[property="csp-nonce"]',
+	))
+		meta.remove();
 	vi.unstubAllGlobals();
 });
 
 describe("CSP-compatible PDF overlay positioning", () => {
 	it("uses the document nonce and updates one scoped rule when a field moves", () => {
+		// The platform wrapper and TanStack Router both publish <meta property="csp-nonce">.
 		const nonce = document.createElement("meta");
-		nonce.name = "csp-nonce";
+		nonce.setAttribute("property", "csp-nonce");
 		nonce.content = "host-request-nonce";
 		document.head.appendChild(nonce);
 		const { container, getByTestId, rerender } = render(<PositionedField />);
@@ -50,6 +54,22 @@ describe("CSP-compatible PDF overlay positioning", () => {
 		expect(field.className).toBe(className);
 		expect(container.querySelectorAll("style")).toHaveLength(1);
 		expect(styles?.textContent).toContain("left:50%;top:50%;");
+	});
+
+	it("keeps accepting a name-based nonce meta and prefers the property-based one", () => {
+		const byName = document.createElement("meta");
+		byName.name = "csp-nonce";
+		byName.content = "name-nonce";
+		document.head.appendChild(byName);
+		expect(render(<PositionedField />).container.querySelector("style")?.nonce).toBe("name-nonce");
+		cleanup();
+		const byProperty = document.createElement("meta");
+		byProperty.setAttribute("property", "csp-nonce");
+		byProperty.content = "property-nonce";
+		document.head.appendChild(byProperty);
+		expect(render(<PositionedField />).container.querySelector("style")?.nonce).toBe(
+			"property-nonce",
+		);
 	});
 
 	it("bounds invalid and oversized rectangles without accepting CSS input", () => {
