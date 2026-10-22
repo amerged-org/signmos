@@ -2,13 +2,14 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { fingerprintAgentCommand } from "@/db/agentic-access";
 import { agenticCommandRecords } from "@/db/agentic-access/table";
-import { type EmailDeliveryEnv, EmailDeliveryError, isResendConfigured } from "@/db/envelope";
+import { type EmailDeliveryEnv, isResendConfigured } from "@/db/envelope";
 import { getDb } from "@/db/setup";
 import { createHono } from "@/hono/factory";
 import { resolveAdminRequest } from "@/omh/auth";
 import { getContract, getContractFinalPdf, listContracts } from "@/omh/contracts";
 import { claimContractCommand, contractCommandPrincipal } from "@/omh/contracts-command";
 import { createAndSendClaimedContract } from "@/omh/contracts-create";
+import { contractFailure } from "@/omh/contracts-failure";
 import {
 	ContractError,
 	type CreateContractRequest,
@@ -144,15 +145,8 @@ async function validatedContractRequest(
 }
 
 async function completeFailedCommand(recordId: string, error: unknown): Promise<Response> {
-	let known: ContractError;
-	if (error instanceof ContractError) known = error;
-	else if (error instanceof EmailDeliveryError)
-		known = new ContractError(
-			"EMAIL_DELIVERY_FAILED",
-			"The invitation could not be confirmed as delivered. Review the draft before sending a new request.",
-			502,
-		);
-	else throw error;
+	const known = contractFailure(error);
+	if (!known) throw error;
 	const body = { error: { code: known.code, message: known.message } };
 	await getDb()
 		.update(agenticCommandRecords)

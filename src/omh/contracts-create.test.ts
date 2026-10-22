@@ -33,6 +33,7 @@ describe("bounded contract creation through private OMH adapters", () => {
 	let env: Env;
 	let storagePending: boolean;
 	let mailUncertain: boolean;
+	let mailRefusal: { status: number; code: string } | null;
 	let commitRejected: boolean;
 	let deliveredKey: string | null;
 	let browser: boolean;
@@ -44,6 +45,7 @@ describe("bounded contract creation through private OMH adapters", () => {
 		batches = [];
 		storagePending = false;
 		mailUncertain = false;
+		mailRefusal = null;
 		commitRejected = false;
 		deliveredKey = null;
 		browser = false;
@@ -155,6 +157,8 @@ describe("bounded contract creation through private OMH adapters", () => {
 						),
 					).toBe(true);
 					deliveredKey = request.headers.get("idempotency-key");
+					if (mailRefusal)
+						return Response.json({ code: mailRefusal.code }, { status: mailRefusal.status });
 					return Response.json(
 						mailUncertain
 							? { state: "uncertain", request_id: transferId }
@@ -257,7 +261,14 @@ describe("bounded contract creation through private OMH adapters", () => {
 			deliveredKey = null;
 			storagePending = failure === "storage";
 			mailUncertain = failure === "mail";
-			expect((await create()).status).toBe(500);
+			// An upload that is still pending leaves the command pending for the operator; an
+			// uncertain mail is answered and recorded, so its key replays instead of staying "running".
+			const response = await create();
+			expect(response.status).toBe(failure === "storage" ? 500 : 503);
+			if (failure === "mail")
+				await expect(response.json()).resolves.toMatchObject({
+					error: { code: "EMAIL_DELIVERY_UNCERTAIN" },
+				});
 			expect(batches).toHaveLength(1);
 			expect(
 				batches[0]?.some(
@@ -269,6 +280,33 @@ describe("bounded contract creation through private OMH adapters", () => {
 			expect(deliveredKey === null).toBe(failure === "storage");
 			expect(physicalCalls).toBeLessThanOrEqual(10);
 		}
+	});
+
+	it.each([
+		["bearer", 429, "mail_send_daily_limit", 429, "MAIL_DAILY_LIMIT"],
+		["bearer", 423, "mail_reputation_suspended", 423, "MAIL_SENDER_SUSPENDED"],
+		["bearer", 402, "paid_plan_required", 402, "PAID_PLAN_REQUIRED"],
+		["browser", 402, "insufficient_organization_credits", 402, "INSUFFICIENT_ORGANIZATION_CREDITS"],
+		["browser", 402, "project_budget_exceeded", 402, "PROJECT_BUDGET_EXCEEDED"],
+		["bearer", 400, "invalid_request", 503, "PLATFORM_CONFIGURATION_INVALID"],
+		["browser", 502, "mail_rejected", 502, "EMAIL_DELIVERY_FAILED"],
+		["bearer", 503, "mail_gateway_unavailable", 503, "PLATFORM_SERVICE_UNAVAILABLE"],
+	] as const)("answers and records a %s gateway refusal %i %s as HTTP %i %s, within ten calls", async (mode, status, code, httpStatus, apiCode) => {
+		browser = mode === "browser";
+		mailRefusal = { status, code };
+		const response = await create();
+		const body = await response.json();
+		expect(response.status).toBe(httpStatus);
+		expect(body).toMatchObject({ error: { code: apiCode } });
+		expect(physicalCalls).toBeLessThanOrEqual(10);
+		// The draft stays inactive and the command is completed with this exact answer.
+		expect(batches).toHaveLength(1);
+		const receipt = queries.find(
+			(query) =>
+				query.text.startsWith('update "agentic_command_records"') &&
+				query.values.includes(JSON.stringify(body)),
+		);
+		expect(receipt?.values).toContain("completed");
 	});
 
 	it("cannot report success when the final atomic activation and receipt transaction fails", async () => {

@@ -14,9 +14,15 @@ import historySigningEndpoint from "@/hono/api/history-signing";
 import modeNavigationEndpoint from "@/hono/api/mode-navigation";
 import signingEndpoint from "@/hono/api/signing";
 import authEndpoint from "@/omh/auth-routes";
+import { apiErrorResponse } from "./api-error";
 import { createHono } from "./factory";
 
 export const apiHono = createHono().basePath("/api");
+// The hosted gate sets x-internal-user-id from the administrator it verified and removes it from
+// every other request, so the header marks the callers who may be told the platform's error code.
+apiHono.onError((error, c) =>
+	apiErrorResponse(error, { administrator: Boolean(c.req.header("x-internal-user-id")) }),
+);
 apiHono.route("/auth", authEndpoint);
 apiHono.route("/contracts", contractsEndpoint);
 

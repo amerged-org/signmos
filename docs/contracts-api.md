@@ -89,6 +89,18 @@ Poll the detail endpoint with a delay appropriate for human signing; increase th
 
 Errors use `{ "error": { "code": "...", "message": "..." } }`. Missing storage or mail configuration returns `503` before a draft is created. A mail provider rejection returns `502 EMAIL_DELIVERY_FAILED`; the partially prepared contract remains visible as a draft. The failed response is replayed for the original key, so retries cannot send duplicate invitations. Review that draft and delivery state before deliberately creating a replacement contract with a new key.
 
-Unexpected interruption after a command is claimed leaves the original command pending. It will not be automatically repeated because delivery may already have occurred; the operator should inspect the draft and mail state before taking further action.
+The hosting platform's own refusals after the draft exists are recorded and replayed the same way, and the draft's signing link stays inactive:
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| `429` | `MAIL_DAILY_LIMIT` | The project's daily email limit (shared by Dev and Prod, UTC day) is used up; no invitation was sent. |
+| `423` | `MAIL_SENDER_SUSPENDED` | Sending is suspended after bounces or complaints; no invitation was sent. |
+| `402` | `PAID_PLAN_REQUIRED`, `INSUFFICIENT_ORGANIZATION_CREDITS`, `PROJECT_BUDGET_EXCEEDED` | The workspace cannot pay for the email; no invitation was sent. |
+| `503` | `PLATFORM_CONFIGURATION_INVALID` | A platform service refused the request, usually a sender address that the mail binding does not list; no invitation was sent. |
+| `503` | `EMAIL_DELIVERY_UNCERTAIN`, `PLATFORM_SERVICE_UNAVAILABLE` | The invitation may or may not have been delivered. Check with the recipient, then create a new request with a new key. |
+
+Unexpected interruption after a command is claimed leaves the original command pending. It will not be automatically repeated because delivery may already have occurred; the operator should inspect the draft and mail state before taking further action. Such errors, and every other unexpected API failure, answer JSON (`INTERNAL_ERROR`, `PLATFORM_SERVICE_ERROR` or `DATABASE_ERROR`) with a stable `reason` code instead of plain text.
+
+The platform's `reason` goes only to the administrator who calls this API, with the console session or a Bearer token. The signer and download-link routes answer the same failure without it, because a code such as `paid_plan_required` or `project_budget_exceeded` would tell a recipient about the sender's plan or budget.
 
 The API provides the application's existing basic electronic signing workflow. Qualified electronic signatures, templates, multiple documents, webhooks, and automatic reminders are outside this endpoint's current feature set.

@@ -16,6 +16,14 @@ export interface OmhMailEnv {
  */
 const MAIL_GATEWAY_TIMEOUT_MILLISECONDS = 25_000;
 
+/** The gateway accepted the request but cannot yet prove delivery; the message may have been sent. */
+export class MailDeliveryUncertainError extends Error {
+	constructor() {
+		super("E-Mail-Versand wird noch bestätigt. Bitte denselben Vorgang erneut prüfen.");
+		this.name = "MailDeliveryUncertainError";
+	}
+}
+
 export function hasOmhMail(env: OmhMailEnv | undefined): boolean {
 	return Boolean(
 		env?.OHMYHOST_MAIL_GATEWAY &&
@@ -66,7 +74,6 @@ export async function sendOmhMail(
 		replyTo: env.SIGN_REPLY_TO_EMAIL,
 		idempotencyKey,
 	});
-	if (result.state !== "accepted")
-		throw new Error("E-Mail-Versand wird noch bestätigt. Bitte denselben Vorgang erneut prüfen.");
+	if (result.state !== "accepted") throw new MailDeliveryUncertainError();
 	return { providerMessage: result.messageId };
 }

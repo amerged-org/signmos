@@ -331,6 +331,33 @@ describe("owner contract API", () => {
 		).toBe(firstRow(envelopes).id);
 	});
 
+	it("records a mail gateway refusal so the original key replays it without another invitation", async () => {
+		const gateway = vi.fn(async () =>
+			Response.json({ code: "mail_send_daily_limit" }, { status: 429 }),
+		);
+		env = {
+			...env,
+			RESEND_API_KEY: "",
+			OHMYHOST_PROJECT_ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+			OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.test",
+			OHMYHOST_MAIL_KEY: "m".repeat(43),
+			OHMYHOST_MAIL_GATEWAY: { fetch: gateway },
+			SIGN_FROM_EMAIL: "contracts@mail.example.test",
+		} as unknown as Env;
+		const first = await send();
+		expect(first.status).toBe(429);
+		await expect(first.json()).resolves.toMatchObject({ error: { code: "MAIL_DAILY_LIMIT" } });
+		const replay = await send();
+		expect(replay.status).toBe(429);
+		await expect(replay.json()).resolves.toMatchObject({ error: { code: "MAIL_DAILY_LIMIT" } });
+		expect(gateway).toHaveBeenCalledTimes(1);
+		expect(firstRow(envelopes).status).toBe("draft");
+		expect(firstRow(signerTokens).status).toBe("revoked");
+		expect(
+			contractRows(agenticCommandRecords).find((row) => row.responseStatus === 429)?.state,
+		).toBe("completed");
+	});
+
 	it("never activates an invitation after the draft owner, status or durable claim changes during delivery", async () => {
 		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		try {

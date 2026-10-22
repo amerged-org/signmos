@@ -70,7 +70,7 @@ export class ContractError extends Error {
 	constructor(
 		public readonly code: string,
 		message: string,
-		public readonly status: 400 | 409 | 413 | 502 | 503 = 400,
+		public readonly status: 400 | 402 | 409 | 413 | 423 | 429 | 502 | 503 = 400,
 	) {
 		super(message);
 		this.name = "ContractError";
