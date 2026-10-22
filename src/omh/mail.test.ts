@@ -61,6 +61,71 @@ describe("managed OMH transactional mail", () => {
 		});
 	});
 
+	describe("gateway latency", () => {
+		afterEach(() => vi.useRealTimers());
+
+		/**
+		 * A service binding rejects when the caller's signal aborts, like the platform's own tests.
+		 * The returned promise settles once the send reached the gateway: the idempotency digest is
+		 * real asynchronous work, so fake time may only advance after that.
+		 */
+		function slowGateway(fetcher: ReturnType<typeof managedMail>["fetcher"], delay: number) {
+			let reached: () => void = () => undefined;
+			const arrived = new Promise<void>((resolve) => {
+				reached = resolve;
+			});
+			fetcher.mockImplementation(
+				(request: Request) =>
+					new Promise<Response>((resolve, reject) => {
+						const answer = setTimeout(
+							() =>
+								resolve(
+									Response.json(
+										{
+											state: "accepted",
+											request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+											message_id: "slow-1",
+										},
+										{ status: 202 },
+									),
+								),
+							delay,
+						);
+						request.signal.addEventListener("abort", () => {
+							clearTimeout(answer);
+							reject(new DOMException("aborted", "AbortError"));
+						});
+						reached();
+					}),
+			);
+			return arrived;
+		}
+
+		it("waits for a send that takes longer than the client's 10 second default", async () => {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			const { env, fetcher } = managedMail();
+			const arrived = slowGateway(fetcher, 12_000);
+			const sent = sendOmhMail(env, message);
+			await arrived;
+			await vi.advanceTimersByTimeAsync(12_000);
+			await expect(sent).resolves.toEqual({ providerMessage: "slow-1" });
+		});
+
+		it("still gives up with a retryable timeout after 25 seconds", async () => {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			const { env, fetcher } = managedMail();
+			const arrived = slowGateway(fetcher, 60_000);
+			const sent = sendOmhMail(env, message);
+			const failure = expect(sent).rejects.toMatchObject({
+				code: "gateway_timeout",
+				retryable: true,
+			});
+			await arrived;
+			await vi.advanceTimersByTimeAsync(25_000);
+			await failure;
+		});
+	});
+
 	it("reuses the content idempotency key for identical retries and changes it for changed content", async () => {
 		const { env, requests } = managedMail();
 		await sendOmhMail(env, message);

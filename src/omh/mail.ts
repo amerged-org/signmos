@@ -9,6 +9,13 @@ export interface OmhMailEnv {
 	SIGN_REPLY_TO_EMAIL?: string;
 }
 
+/**
+ * The gateway answers only after several Control database transactions and the provider call; the
+ * platform has observed 5-13 s sends. The client's 10 s default would abort a send that still
+ * completes, which turns an accepted mail into a 503 and a second send. 30 s is the client maximum.
+ */
+const MAIL_GATEWAY_TIMEOUT_MILLISECONDS = 25_000;
+
 export function hasOmhMail(env: OmhMailEnv | undefined): boolean {
 	return Boolean(
 		env?.OHMYHOST_MAIL_GATEWAY &&
@@ -51,6 +58,7 @@ export async function sendOmhMail(
 		key: env.OHMYHOST_MAIL_KEY,
 		projectId: env.OHMYHOST_PROJECT_ID,
 		fetch: (request) => gateway.fetch(request),
+		timeoutMilliseconds: MAIL_GATEWAY_TIMEOUT_MILLISECONDS,
 	});
 	const result = await client.send({
 		...mail,
