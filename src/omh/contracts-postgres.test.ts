@@ -9,6 +9,7 @@ import { withDatabase } from "@/db/setup";
 import { getContract, getContractFinalPdf, listContracts } from "./contracts";
 import { createAndSendClaimedContract } from "./contracts-create";
 import type { CreateContractRequest } from "./contracts-schema";
+import { setOmhMailTransport } from "./mail";
 
 const owner = "owner@example.com";
 const envelopeId = "a0000000-0000-4000-8000-000000000001";
@@ -73,6 +74,7 @@ beforeEach(async () => {
 	calls = { query: 0, transaction: 0 };
 	batches = [];
 });
+afterEach(() => setOmhMailTransport(null));
 
 it("executes one owner-scoped projection RPC with real SQL correlation and latest immutable artifacts", async () => {
 	await postgres.query(
@@ -164,40 +166,35 @@ it.each([
 			return null;
 		},
 	} as unknown as R2Bucket;
+	setOmhMailTransport(async () => {
+		expect(uploaded).toBe(true);
+		if (outcome === "lifecycle") await postgres.exec("UPDATE envelopes SET status='declined'");
+		if (outcome === "owner")
+			await postgres.exec("UPDATE envelopes SET created_by='another@example.com'");
+		if (outcome === "command")
+			await postgres.query(
+				"UPDATE agentic_command_records SET state='completed',response_status=409,response_body='{}' WHERE id=$1",
+				[commandId],
+			);
+		if (outcome === "deletion")
+			await postgres.exec(
+				"INSERT INTO audit_events(envelope_id,event_type,message) SELECT id,'envelope.deletion_started','owner@example.com' FROM envelopes",
+			);
+		return Response.json(
+			{
+				state: "accepted",
+				request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+				message_id: "fixture-message",
+			},
+			{ status: 202 },
+		);
+	});
 	const emailEnv = {
 		OHMYHOST_PROJECT_ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 		OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.com",
 		OHMYHOST_MAIL_KEY: "m".repeat(43),
 		SIGN_FROM_EMAIL: "contracts@mail.example.com",
 		SIGN_REPLY_TO_EMAIL: owner,
-		OHMYHOST_MAIL_GATEWAY: {
-			connect: () => {
-				throw new Error("Mail test transport cannot open sockets");
-			},
-			fetch: async () => {
-				expect(uploaded).toBe(true);
-				if (outcome === "lifecycle") await postgres.exec("UPDATE envelopes SET status='declined'");
-				if (outcome === "owner")
-					await postgres.exec("UPDATE envelopes SET created_by='another@example.com'");
-				if (outcome === "command")
-					await postgres.query(
-						"UPDATE agentic_command_records SET state='completed',response_status=409,response_body='{}' WHERE id=$1",
-						[commandId],
-					);
-				if (outcome === "deletion")
-					await postgres.exec(
-						"INSERT INTO audit_events(envelope_id,event_type,message) SELECT id,'envelope.deletion_started','owner@example.com' FROM envelopes",
-					);
-				return Response.json(
-					{
-						state: "accepted",
-						request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
-						message_id: "fixture-message",
-					},
-					{ status: 202 },
-				);
-			},
-		},
 	};
 	const creating = withDatabase({ OHMYHOST_DATABASE: binding }, () =>
 		createAndSendClaimedContract({

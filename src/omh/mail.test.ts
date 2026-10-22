@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deliverTransactionalEmail, isResendConfigured } from "@/db/envelope/email-delivery";
-import { hasOmhMail, type OmhMailEnv, sendOmhMail } from "./mail";
+import { hasOmhMail, type OmhMailEnv, sendOmhMail, setOmhMailTransport } from "./mail";
 
 const message = {
 	to: "signer@example.test",
@@ -9,7 +9,8 @@ const message = {
 	html: '<a href="https://sign.example.test/signing/synthetic-token">Sign contract</a>',
 };
 
-function managedMail(state: "accepted" | "uncertain" = "accepted") {
+/** A mail gateway double and the runtime configuration that addresses it; nothing is installed. */
+function gatewayDouble(state: "accepted" | "uncertain" = "accepted") {
 	const requests: Pick<Request, "url" | "method" | "headers" | "json">[] = [];
 	const fetcher = vi.fn(async (request: Request) => {
 		requests.push(request.clone());
@@ -23,7 +24,6 @@ function managedMail(state: "accepted" | "uncertain" = "accepted") {
 		);
 	});
 	const env: OmhMailEnv = {
-		OHMYHOST_MAIL_GATEWAY: { fetch: fetcher } as unknown as Fetcher,
 		OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.test",
 		OHMYHOST_MAIL_KEY: "k".repeat(43),
 		OHMYHOST_PROJECT_ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -33,19 +33,39 @@ function managedMail(state: "accepted" | "uncertain" = "accepted") {
 	return { env, fetcher, requests };
 }
 
-afterEach(() => vi.restoreAllMocks());
+/** The gateway double receives the mail through the transport seam instead of the global fetch. */
+function managedMail(state: "accepted" | "uncertain" = "accepted") {
+	const double = gatewayDouble(state);
+	setOmhMailTransport(double.fetcher);
+	return double;
+}
+
+afterEach(() => {
+	setOmhMailTransport(null);
+	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
+});
 
 describe("managed OMH transactional mail", () => {
-	it("sends through the private binding with the complete message and runtime credentials", async () => {
-		const { env, fetcher, requests } = managedMail();
-		const publicFetch = vi
-			.spyOn(globalThis, "fetch")
-			.mockRejectedValue(new Error("Unexpected public request"));
-		await expect(sendOmhMail(env, message)).resolves.toEqual({
+	/**
+	 * The platform's egress-policy Worker forwards a global fetch to the mail gateway privately.
+	 * The service binding OHMYHOST_MAIL_GATEWAY answers 503 mail_gateway_unavailable while that
+	 * policy is attached (observed 2026-10-22), so the adapter must never route through it.
+	 */
+	it("sends through the global fetch with the complete message and runtime credentials, because the private binding fails under the egress policy", async () => {
+		const { env, fetcher, requests } = gatewayDouble();
+		vi.stubGlobal("fetch", fetcher);
+		const binding = {
+			fetch: vi.fn(async () =>
+				Response.json({ code: "mail_gateway_unavailable" }, { status: 503 }),
+			),
+		};
+		const platformEnv = { ...env, OHMYHOST_MAIL_GATEWAY: binding };
+		await expect(sendOmhMail(platformEnv, message)).resolves.toEqual({
 			providerMessage: "synthetic-message-1",
 		});
 		expect(fetcher).toHaveBeenCalledOnce();
-		expect(publicFetch).not.toHaveBeenCalled();
+		expect(binding.fetch).not.toHaveBeenCalled();
 		const request = requests[0];
 		expect(request).toBeDefined();
 		if (!request) throw new Error("Expected a gateway request");
@@ -61,11 +81,28 @@ describe("managed OMH transactional mail", () => {
 		});
 	});
 
+	it("is configured by the gateway URL, key, project and sender alone, without a private binding", () => {
+		expect(hasOmhMail(gatewayDouble().env)).toBe(true);
+	});
+
+	it("sends through a replacement transport until the seam is reset to the global fetch", async () => {
+		const replacement = managedMail();
+		const platform = gatewayDouble();
+		vi.stubGlobal("fetch", platform.fetcher);
+		await sendOmhMail(replacement.env, message);
+		expect(replacement.fetcher).toHaveBeenCalledOnce();
+		expect(platform.fetcher).not.toHaveBeenCalled();
+		setOmhMailTransport(null);
+		await sendOmhMail(replacement.env, message);
+		expect(replacement.fetcher).toHaveBeenCalledOnce();
+		expect(platform.fetcher).toHaveBeenCalledOnce();
+	});
+
 	describe("gateway latency", () => {
 		afterEach(() => vi.useRealTimers());
 
 		/**
-		 * A service binding rejects when the caller's signal aborts, like the platform's own tests.
+		 * A fetch rejects when the caller's signal aborts, like the platform's own tests.
 		 * The returned promise settles once the send reached the gateway: the idempotency digest is
 		 * real asynchronous work, so fake time may only advance after that.
 		 */
@@ -138,7 +175,6 @@ describe("managed OMH transactional mail", () => {
 	});
 
 	it.each([
-		"OHMYHOST_MAIL_GATEWAY",
 		"OHMYHOST_MAIL_GATEWAY_URL",
 		"OHMYHOST_MAIL_KEY",
 		"OHMYHOST_PROJECT_ID",

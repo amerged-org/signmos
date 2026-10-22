@@ -9,7 +9,6 @@ interface Env extends BaseEnv {
 	OHMYHOST_STORAGE_KEY: string;
 	OHMYHOST_PROJECT_ID: string;
 	OHMYHOST_ENVIRONMENT_ID: string;
-	OHMYHOST_MAIL_GATEWAY?: Fetcher;
 	OHMYHOST_MAIL_GATEWAY_URL?: string;
 	OHMYHOST_MAIL_KEY?: string;
 	SIGN_ADMIN_EMAILS?: string;

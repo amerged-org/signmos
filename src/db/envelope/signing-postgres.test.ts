@@ -7,6 +7,7 @@ import type {
 import { PDFDocument } from "pdf-lib";
 import { withDatabase } from "@/db/setup";
 import { apiHono } from "@/hono/api";
+import { setOmhMailTransport } from "@/omh/mail";
 import { controlEnvelope } from "./controls";
 import { resolveSignerToken } from "./signing";
 
@@ -108,22 +109,20 @@ const env = {
 	OHMYHOST_MAIL_KEY: "m".repeat(43),
 	SIGN_FROM_EMAIL: "contracts@mail.example.com",
 	SIGN_REPLY_TO_EMAIL: "owner@example.com",
-	OHMYHOST_MAIL_GATEWAY: {
-		fetch: async () => {
-			calls.mail += 1;
-			await beforeMail?.();
-			if (mailAnswer) return mailAnswer();
-			return Response.json(
-				{
-					state: "accepted",
-					request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
-					message_id: "fixture-message",
-				},
-				{ status: 202 },
-			);
-		},
-	},
 } as unknown as Env;
+async function mailGateway(): Promise<Response> {
+	calls.mail += 1;
+	await beforeMail?.();
+	if (mailAnswer) return mailAnswer();
+	return Response.json(
+		{
+			state: "accepted",
+			request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+			message_id: "fixture-message",
+		},
+		{ status: 202 },
+	);
+}
 function request(path: string, init: RequestInit = {}) {
 	return withDatabase({ OHMYHOST_DATABASE: binding }, async () =>
 		apiHono.request(path, { ...init, headers: { "x-now": now, ...init.headers } }, env),
@@ -144,12 +143,14 @@ function complete(rememberSignature = false) {
 	});
 }
 beforeAll(async () => {
+	setOmhMailTransport(mailGateway);
 	postgres = new PGlite();
 	const migrations = new URL("../../../database/omh-migrations/", import.meta.url);
 	for (const file of (await readdir(migrations)).filter((name) => name.endsWith(".sql")).sort())
 		await postgres.exec(await readFile(new URL(file, migrations), "utf8"));
 }, 20_000);
 afterAll(async () => {
+	setOmhMailTransport(null);
 	await postgres.close();
 });
 beforeEach(async () => {

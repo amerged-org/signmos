@@ -15,6 +15,7 @@ import { createHono } from "@/hono/factory";
 import { createAdminCsrfToken, withAdminRequestScope } from "./auth";
 import { authorizeHostedRequest } from "./auth-gate";
 import type { CreateContractRequest } from "./contracts-schema";
+import { setOmhMailTransport } from "./mail";
 import { createOmhDocumentsBucket, type OmhStorageEnv } from "./storage";
 
 const token = "signmos_budget_test_owner_token";
@@ -138,6 +139,24 @@ describe("bounded contract creation through private OMH adapters", () => {
 			expect(request.method).toBe("PUT");
 			return new Response(null, { status: 200 });
 		});
+		setOmhMailTransport(async (request: Request) => {
+			physicalCalls++;
+			expect(batches).toHaveLength(1);
+			expect(
+				batches[0]?.some(
+					(query) => query.text.includes('"signer_tokens"') && query.values.includes("revoked"),
+				),
+			).toBe(true);
+			deliveredKey = request.headers.get("idempotency-key");
+			if (mailRefusal)
+				return Response.json({ code: mailRefusal.code }, { status: mailRefusal.status });
+			return Response.json(
+				mailUncertain
+					? { state: "uncertain", request_id: transferId }
+					: { state: "accepted", request_id: transferId, message_id: "message-1" },
+				{ status: 202 },
+			);
+		});
 		env = {
 			...storageEnv,
 			OHMYHOST_DATABASE: database,
@@ -147,26 +166,6 @@ describe("bounded contract creation through private OMH adapters", () => {
 			SIGN_REPLY_TO_EMAIL: owner,
 			OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.com",
 			OHMYHOST_MAIL_KEY: "m".repeat(43),
-			OHMYHOST_MAIL_GATEWAY: {
-				fetch: async (request: Request) => {
-					physicalCalls++;
-					expect(batches).toHaveLength(1);
-					expect(
-						batches[0]?.some(
-							(query) => query.text.includes('"signer_tokens"') && query.values.includes("revoked"),
-						),
-					).toBe(true);
-					deliveredKey = request.headers.get("idempotency-key");
-					if (mailRefusal)
-						return Response.json({ code: mailRefusal.code }, { status: mailRefusal.status });
-					return Response.json(
-						mailUncertain
-							? { state: "uncertain", request_id: transferId }
-							: { state: "accepted", request_id: transferId, message_id: "message-1" },
-						{ status: 202 },
-					);
-				},
-			},
 			DOCUMENTS_BUCKET: createOmhDocumentsBucket(storageEnv),
 		} as unknown as Env;
 		const pdf = await PDFDocument.create();
@@ -178,6 +177,7 @@ describe("bounded contract creation through private OMH adapters", () => {
 		};
 	});
 	afterEach(() => {
+		setOmhMailTransport(null);
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
 	});

@@ -10,6 +10,7 @@ import {
 } from "@/db/history-access/request-abuse";
 import { withDatabase } from "@/db/setup";
 import { requestAdminLogin } from "./auth-login";
+import { setOmhMailTransport } from "./mail";
 
 const owner = "owner@example.com";
 let postgres: PGlite;
@@ -47,20 +48,18 @@ const env = {
 	OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.com",
 	OHMYHOST_MAIL_KEY: "m".repeat(43),
 	SIGN_FROM_EMAIL: "contracts@mail.example.com",
-	OHMYHOST_MAIL_GATEWAY: {
-		fetch: async (request: Request) => {
-			privateCalls += 1;
-			mails.push({ to: ((await request.json()) as { to: string }).to });
-			return (
-				mailAnswer?.() ??
-				Response.json(
-					{ state: "accepted", request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW", message_id: "login-1" },
-					{ status: 202 },
-				)
-			);
-		},
-	},
 } as unknown as Env;
+async function mailGateway(request: Request): Promise<Response> {
+	privateCalls += 1;
+	mails.push({ to: ((await request.json()) as { to: string }).to });
+	return (
+		mailAnswer?.() ??
+		Response.json(
+			{ state: "accepted", request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW", message_id: "login-1" },
+			{ status: 202 },
+		)
+	);
+}
 
 function login(email = owner, requestIp = "203.0.113.1") {
 	return withDatabase({ OHMYHOST_DATABASE: binding }, () =>
@@ -81,12 +80,14 @@ async function budgetRows() {
 }
 
 beforeAll(async () => {
+	setOmhMailTransport(mailGateway);
 	postgres = new PGlite();
 	const migrations = new URL("../../database/omh-migrations/", import.meta.url);
 	for (const file of (await readdir(migrations)).filter((name) => name.endsWith(".sql")).sort())
 		await postgres.exec(await readFile(new URL(file, migrations), "utf8"));
 }, 20_000);
 afterAll(async () => {
+	setOmhMailTransport(null);
 	await postgres.close();
 });
 beforeEach(async () => {

@@ -13,7 +13,7 @@ An allowlisted administrator signs in using a single-use email link. The private
 - TanStack Start and Hono run on OMH Workers.
 - PostgreSQL is accessed through the private OMH binding with request-scoped Drizzle adapters; no database credentials enter the app.
 - Private PDFs use OMH Files and immutable artifact versions.
-- Email uses the private OMH transactional-mail gateway and a verified sender domain.
+- Email uses the OMH transactional-mail gateway, reached with the global `fetch` rather than a private binding (see [architecture](ARCHITECTURE.md)), and a verified sender domain.
 - `SIGN_ADMIN_EMAILS` is an explicit email allowlist; public registration is disabled.
 - Login sessions use Secure, HttpOnly, host-only cookies. Browser changes require same-origin requests and CSRF tokens. API keys are displayed once and stored as hashes.
 - Recipient signing/verification links remain accessible without administrator credentials and retain their envelope-specific authorization.
@@ -32,7 +32,7 @@ Supply runtime configuration privately through OMH:
 | APP_BASE_URL | Trusted origin for this environment |
 | CLOUDFLARE_ENV | `production` for both hosted environments |
 
-OMH injects its private database, file and mail bindings. No Resend key, raw R2 credentials or database connection string is needed. Resend transport remains only for upstream local fixtures.
+OMH injects its private database and file bindings and the mail gateway URL and key (`OHMYHOST_MAIL_GATEWAY_URL`, `OHMYHOST_MAIL_KEY`); mail does not use the private mail binding. No Resend key, raw R2 credentials or database connection string is needed. Resend transport remains only for upstream local fixtures.
 
 ## Development and verification
 

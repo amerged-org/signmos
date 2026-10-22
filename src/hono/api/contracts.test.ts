@@ -16,6 +16,7 @@ import {
 import { hashHistoryCredential } from "@/db/history-access/request";
 import { historySessions } from "@/db/history-access/table";
 import { createAdminCsrfToken } from "@/omh/auth";
+import { setOmhMailTransport } from "@/omh/mail";
 import contractsEndpoint from "./contracts";
 import {
 	contractRows,
@@ -103,7 +104,10 @@ describe("owner contract API", () => {
 			DOCUMENTS_BUCKET: contractsTestBucket(),
 		} as Env;
 	});
-	afterEach(() => vi.unstubAllGlobals());
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		setOmhMailTransport(null);
+	});
 
 	it("uploads, prepares and sends one external contract without signing for the owner", async () => {
 		fetcher.mockImplementation(async () => {
@@ -335,13 +339,13 @@ describe("owner contract API", () => {
 		const gateway = vi.fn(async () =>
 			Response.json({ code: "mail_send_daily_limit" }, { status: 429 }),
 		);
+		setOmhMailTransport(gateway);
 		env = {
 			...env,
 			RESEND_API_KEY: "",
 			OHMYHOST_PROJECT_ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 			OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.test",
 			OHMYHOST_MAIL_KEY: "m".repeat(43),
-			OHMYHOST_MAIL_GATEWAY: { fetch: gateway },
 			SIGN_FROM_EMAIL: "contracts@mail.example.test",
 		} as unknown as Env;
 		const first = await send();
