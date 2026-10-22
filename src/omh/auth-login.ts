@@ -10,7 +10,10 @@ import {
 	historyAccessLinks,
 	redeemHistoryAccessLink,
 } from "@/db/history-access";
-import { assertHistoryRequestRateLimits } from "@/db/history-access/request-abuse";
+import {
+	assertHistoryRequestRateLimits,
+	takeAdminLoginMailBudget,
+} from "@/db/history-access/request-abuse";
 import { getDb } from "@/db/setup";
 import { type AdminAuthEnv, isAllowedAdmin } from "./auth";
 
@@ -26,6 +29,8 @@ export async function requestAdminLogin(input: {
 	if (!isAllowedAdmin(email, input.env)) return;
 	if (!isResendConfigured(input.emailDelivery.env))
 		throw new Error("Administrator login email is not configured");
+	// Answered like an unknown address: no mail, no signal to whoever is typing the address.
+	if (!(await takeAdminLoginMailBudget({ email, now }))) return;
 	const db = getDb();
 	const rawCredential = `${crypto.randomUUID()}${crypto.randomUUID()}`;
 	const [link] = await db

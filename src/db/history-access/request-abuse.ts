@@ -1,10 +1,13 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { rateLimitRecords } from "@/db/envelope";
 import { getDb } from "@/db/setup";
 
 const historyRequestRateLimitOperation = "history-access-request";
 const historyRequestMaxAttempts = 5;
 const historyRequestWindowMs = 10 * 60 * 1000;
+const adminLoginMailOperation = "admin-login-mail";
+export const ADMIN_LOGIN_MAILS_PER_DAY = 4;
+const adminLoginMailWindowMs = 24 * 60 * 60 * 1000;
 
 type HistoryRequestRateScope = "ip" | "email";
 
@@ -93,4 +96,36 @@ async function assertHistoryRequestRateLimit(input: {
 			updatedAt: input.now,
 		})
 		.where(eq(rateLimitRecords.id, record.id));
+}
+
+/**
+ * Every login mail spends one of the project's daily sends (10 on its first day, shared by Dev and
+ * Prod), and the login request is public: anyone can type the administrator's address. Counting
+ * the administrator's mails per 24 hours in one atomic upsert keeps a script from using up the
+ * project's sends that invitations and signatures need. Returns false once the budget is spent.
+ */
+export async function takeAdminLoginMailBudget(input: {
+	email: string;
+	now: Date;
+}): Promise<boolean> {
+	const windowEnd = new Date(input.now.getTime() + adminLoginMailWindowMs);
+	const [row] = await getDb()
+		.insert(rateLimitRecords)
+		.values({
+			key: `email:${input.email.trim().toLowerCase()}`,
+			operation: adminLoginMailOperation,
+			attempts: 1,
+			resetAt: windowEnd,
+			updatedAt: input.now,
+		})
+		.onConflictDoUpdate({
+			target: [rateLimitRecords.key, rateLimitRecords.operation],
+			set: {
+				attempts: sql`case when ${rateLimitRecords.resetAt} > ${input.now} then ${rateLimitRecords.attempts} + 1 else 1 end`,
+				resetAt: sql`case when ${rateLimitRecords.resetAt} > ${input.now} then ${rateLimitRecords.resetAt} else ${windowEnd} end`,
+				updatedAt: input.now,
+			},
+		})
+		.returning({ attempts: rateLimitRecords.attempts });
+	return (row?.attempts ?? Number.POSITIVE_INFINITY) <= ADMIN_LOGIN_MAILS_PER_DAY;
 }
