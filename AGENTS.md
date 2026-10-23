@@ -73,6 +73,7 @@ pnpm types
 pnpm test
 pnpm lint
 pnpm build
+pnpm omh:output # build like the ohmyho.st sandbox into dist/ and fail on what its packaging refuses
 pnpm agentic:smoke
 pnpm agentic:calibrate
 pnpm db:generate:dev
@@ -90,6 +91,7 @@ pnpm types
 pnpm test
 pnpm lint
 pnpm build
+pnpm omh:output
 ```
 
 If any check is not run or does not pass, say exactly which acceptance criteria remain unverified and why.

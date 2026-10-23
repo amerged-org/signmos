@@ -45,6 +45,7 @@ pnpm test
 pnpm lint
 pnpm build
 pnpm omh:check
+pnpm omh:output # build like the ohmyho.st sandbox and fail on what its packaging refuses
 ```
 
 Local tests use isolated adapters and synthetic PDFs; they do not establish hosted email delivery. Hosted readiness additionally requires login, API send/retry, recipient verification/signing, completed-PDF download and logout/revocation checks. No runtime test bypass is enabled in production.

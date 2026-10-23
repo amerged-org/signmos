@@ -24,3 +24,6 @@ count.txt
 /.ohmyhost/
 
 .ohmyhost/
+
+# platform-style build config that `pnpm run omh:output` writes and removes
+.ohmyhost-tanstack-wrangler.jsonc

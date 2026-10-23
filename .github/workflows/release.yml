@@ -53,6 +53,11 @@ jobs:
       - name: Knip
         run: pnpm run knip
 
+      # Builds with the ohmyho.st build runner's own Worker config and fails when its packaging would
+      # refuse the output (source maps, unknown config keys, "<prefix>/assets/" text).
+      - name: Platform output parity
+        run: pnpm run omh:output
+
       # Runs semantic-release. Conventional Commits → version bump:
       #   feat:                                            → minor
       #   fix: / perf: / revert: / refactor:               → patch

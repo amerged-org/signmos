@@ -70,7 +70,7 @@
 - [src/hono/public-agent-contract.ts](src/hono/public-agent-contract.ts): Public guide and runtime-parity OpenAPI publisher.
 - [plans/pilot-readiness-contract.md](plans/pilot-readiness-contract.md): Legacy/internal lifecycle contract and smoke evidence map.
 - [src/hono/factory.ts](src/hono/factory.ts): Typed Hono factory.
-- [src/server.ts](src/server.ts): Cloudflare Worker entry; routes `/api/*` to Hono.
+- [src/omh/hosted-middleware.ts](src/omh/hosted-middleware.ts): Global TanStack request middleware (registered in `src/start.tsx`) that runs the hosted gate and routes `/api/*` to Hono; there is no custom Worker entry.
 
 ### Envelope Domain
 

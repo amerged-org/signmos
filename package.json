@@ -30,7 +30,8 @@
 		"db:generate:dev": "dotenvx run -f .dev.vars -- drizzle-kit generate --config drizzle-dev.config.ts",
 		"db:generate:staging": "dotenvx run -f .staging.vars -- drizzle-kit generate --config drizzle-staging.config.ts",
 		"db:generate:production": "dotenvx run -f .production.vars -- drizzle-kit generate --config drizzle-production.config.ts",
-		"omh:check": "ohmyhost init --dry-run --region eu --json"
+		"omh:check": "ohmyhost init --dry-run --region eu --json",
+		"omh:output": "node --import tsx scripts/check-omh-output.ts"
 	},
 	"dependencies": {
 		"@ohmyhost/customer-runtime": "npm:@amerged/ohmyhost-runtime@0.1.36",
