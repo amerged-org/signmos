@@ -1,7 +1,14 @@
+import { CustomerRuntimeError, CustomerRuntimeGatewayError } from "@ohmyhost/customer-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deliverTransactionalEmail, isResendConfigured } from "@/db/envelope/email-delivery";
+import {
+	deliverTransactionalEmail,
+	EmailDeliveryError,
+	isResendConfigured,
+} from "@/db/envelope/email-delivery";
 import {
 	hasOmhMail,
+	isMailRefusedBeforeSending,
+	MailDeliveryUncertainError,
 	type OmhMailEnv,
 	OWNER_NOTICE_TIMEOUT_MILLISECONDS,
 	sendOmhMail,
@@ -307,5 +314,54 @@ describe("managed OMH transactional mail", () => {
 			"https://api.resend.com/emails",
 			expect.objectContaining({ method: "POST" }),
 		);
+	});
+});
+
+/**
+ * A refusal that proves no mail left lets a caller hand back what the attempt cost, such as a unit
+ * of a rate budget. The codes below are the gateway's answers before it contacts the mail provider
+ * (and the client's own refusals before any request); every other outcome may have sent the mail.
+ */
+describe("which mail failures prove that no mail was sent", () => {
+	it.each([
+		"gateway_request_invalid",
+		"gateway_configuration_invalid",
+		"unauthorized",
+		"paid_plan_required",
+		"insufficient_organization_credits",
+		"project_budget_exceeded",
+		"mail_reputation_suspended",
+		// Refused before the provider as well: the daily cap is claimed in the same transaction.
+		"mail_send_limit_exceeded",
+	] as const)("%s does", (code) => {
+		expect(isMailRefusedBeforeSending(new CustomerRuntimeGatewayError(code, 400, false))).toBe(
+			true,
+		);
+	});
+
+	it.each([
+		// The message or recipient was judged unacceptable: a bad address stays counted.
+		"mail_rejected",
+		// The gateway or the way to it failed: the mail may have been sent before or after.
+		"gateway_unavailable",
+		"gateway_timeout",
+		"gateway_response_invalid",
+		"mail_send_conflict",
+		"storage_conflict",
+	] as const)("%s does not", (code) => {
+		expect(isMailRefusedBeforeSending(new CustomerRuntimeGatewayError(code, 503, true))).toBe(
+			false,
+		);
+	});
+
+	it("does not for other platform errors, an uncertain send or anything that is not a platform error", () => {
+		expect(isMailRefusedBeforeSending(new CustomerRuntimeError("database_unavailable", true))).toBe(
+			false,
+		);
+		expect(isMailRefusedBeforeSending(new MailDeliveryUncertainError())).toBe(false);
+		expect(isMailRefusedBeforeSending(new EmailDeliveryError(402, "provider"))).toBe(false);
+		expect(isMailRefusedBeforeSending(new TypeError("paid_plan_required"))).toBe(false);
+		expect(isMailRefusedBeforeSending("paid_plan_required")).toBe(false);
+		expect(isMailRefusedBeforeSending(undefined)).toBe(false);
 	});
 });

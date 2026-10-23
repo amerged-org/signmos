@@ -98,21 +98,43 @@ async function assertHistoryRequestRateLimit(input: {
 		.where(eq(rateLimitRecords.id, record.id));
 }
 
+/** One unit of the login mail budget, which its holder can hand back. */
+export interface AdminLoginMailGrant {
+	/**
+	 * Gives the unit back after a send that provably sent nothing. Only the first call has an effect,
+	 * and only while the window the unit was taken from is the current one.
+	 */
+	giveBack(): Promise<void>;
+}
+
 /**
  * Every login mail spends one of the project's daily sends (10 on its first day, shared by Dev and
  * Prod), and the login request is public: anyone can type the administrator's address. Counting
  * the administrator's mails per 24 hours in one atomic upsert keeps a script from using up the
- * project's sends that invitations and signatures need. Returns false once the budget is spent.
+ * project's sends that invitations and signatures need. Returns null once the budget is spent.
+ *
+ * The stored count is the number of units out in the window. A request over the budget changes
+ * nothing, so the units that are handed back add up to an empty budget however many requests were
+ * turned away at the same time.
+ *
+ * The unit is taken before the send. When the request proves that no mail left, because the
+ * platform refused the send before it contacted the mail provider or because it failed before it
+ * asked for one, the caller hands the unit back with one atomic update, so that a misconfiguration
+ * or an unpaid workspace cannot lock the administrator out. The budget still bounds the mails that
+ * can have left, because a unit is returned only for a request that sent none; the ten-minute
+ * request limiter keeps counting every request, refused or not.
  */
 export async function takeAdminLoginMailBudget(input: {
 	email: string;
 	now: Date;
-}): Promise<boolean> {
+}): Promise<AdminLoginMailGrant | null> {
+	const db = getDb();
+	const key = `email:${input.email.trim().toLowerCase()}`;
 	const windowEnd = new Date(input.now.getTime() + adminLoginMailWindowMs);
-	const [row] = await getDb()
+	const [row] = await db
 		.insert(rateLimitRecords)
 		.values({
-			key: `email:${input.email.trim().toLowerCase()}`,
+			key,
 			operation: adminLoginMailOperation,
 			attempts: 1,
 			resetAt: windowEnd,
@@ -125,7 +147,31 @@ export async function takeAdminLoginMailBudget(input: {
 				resetAt: sql`case when ${rateLimitRecords.resetAt} > ${input.now} then ${rateLimitRecords.resetAt} else ${windowEnd} end`,
 				updatedAt: input.now,
 			},
+			// Inside a window whose budget is spent the row is left alone and nothing is returned.
+			setWhere: sql`${rateLimitRecords.resetAt} <= ${input.now} or ${rateLimitRecords.attempts} < ${ADMIN_LOGIN_MAILS_PER_DAY}`,
 		})
-		.returning({ attempts: rateLimitRecords.attempts });
-	return (row?.attempts ?? Number.POSITIVE_INFINITY) <= ADMIN_LOGIN_MAILS_PER_DAY;
+		.returning({ resetAt: rateLimitRecords.resetAt });
+	if (!row) return null;
+	let givenBack = false;
+	return {
+		async giveBack() {
+			if (givenBack) return;
+			givenBack = true;
+			// Relative to the stored count and only inside the window the unit came from: a window that
+			// ended while the send was in flight has a new count that this unit never belonged to.
+			await db
+				.update(rateLimitRecords)
+				.set({
+					attempts: sql`greatest(${rateLimitRecords.attempts} - 1, 0)`,
+					updatedAt: new Date(),
+				})
+				.where(
+					and(
+						eq(rateLimitRecords.key, key),
+						eq(rateLimitRecords.operation, adminLoginMailOperation),
+						eq(rateLimitRecords.resetAt, row.resetAt),
+					),
+				);
+		},
+	};
 }

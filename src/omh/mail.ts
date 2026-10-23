@@ -1,3 +1,4 @@
+import { CustomerRuntimeError } from "@ohmyhost/customer-runtime";
 import { createTransactionalMailClient } from "@ohmyhost/customer-runtime/mail";
 
 export interface OmhMailEnv {
@@ -59,6 +60,33 @@ export class MailDeliveryUncertainError extends Error {
 		super("E-Mail-Versand wird noch bestätigt. Bitte denselben Vorgang erneut prüfen.");
 		this.name = "MailDeliveryUncertainError";
 	}
+}
+
+/**
+ * The platform's refusals that come before the mail provider is contacted: the client's own checks
+ * of the request and the key, and the gateway's authorization, input, plan, credit, budget,
+ * reputation and daily-cap checks, all of which run before it calls the provider
+ * (apps/mail-gateway/src/resend-send.ts of the platform: authorization, validation and the claim,
+ * which counts the day's sends and raises the cap, precede `provider.send`). Such a failure proves
+ * that no mail was sent. Deliberately absent:
+ * - mail_rejected, the message or recipient judged unacceptable (a bad address).
+ * - every failure that leaves open whether the mail left: an unavailable or silent gateway, an
+ *   unreadable answer, an uncertain result.
+ */
+const REFUSED_BEFORE_SENDING: ReadonlySet<string> = new Set([
+	"gateway_request_invalid",
+	"gateway_configuration_invalid",
+	"unauthorized",
+	"paid_plan_required",
+	"insufficient_organization_credits",
+	"project_budget_exceeded",
+	"mail_reputation_suspended",
+	"mail_send_limit_exceeded",
+]);
+
+/** Whether `error` proves that the mail was not sent, so a caller may hand back what the attempt cost. */
+export function isMailRefusedBeforeSending(error: unknown): boolean {
+	return error instanceof CustomerRuntimeError && REFUSED_BEFORE_SENDING.has(error.code);
 }
 
 export function hasOmhMail(env: OmhMailEnv | undefined): boolean {
