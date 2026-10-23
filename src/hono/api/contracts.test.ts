@@ -362,6 +362,25 @@ describe("owner contract API", () => {
 		).toBe("completed");
 	});
 
+	it("never overwrites a command that completed before its late failure was recorded", async () => {
+		// A commit whose answer was lost has already completed the command with its true receipt.
+		const committed = {
+			state: "completed",
+			responseStatus: 201,
+			responseBody: JSON.stringify({ data: { id: "committed-contract" } }),
+		};
+		fetcher.mockImplementation(async () => {
+			Object.assign(firstRow(agenticCommandRecords), committed);
+			return new Response("provider failure", { status: 502 });
+		});
+		expect((await send()).status).toBe(502);
+		expect(firstRow(agenticCommandRecords)).toMatchObject(committed);
+		const replay = await send();
+		expect(replay.status).toBe(201);
+		await expect(replay.json()).resolves.toEqual({ data: { id: "committed-contract" } });
+		expect(fetcher).toHaveBeenCalledTimes(1);
+	});
+
 	it("never activates an invitation after the draft owner, status or durable claim changes during delivery", async () => {
 		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		try {

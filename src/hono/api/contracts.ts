@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { fingerprintAgentCommand } from "@/db/agentic-access";
 import { agenticCommandRecords } from "@/db/agentic-access/table";
@@ -9,7 +9,7 @@ import { resolveAdminRequest } from "@/omh/auth";
 import { getContract, getContractFinalPdf, listContracts } from "@/omh/contracts";
 import { claimContractCommand, contractCommandPrincipal } from "@/omh/contracts-command";
 import { createAndSendClaimedContract } from "@/omh/contracts-create";
-import { contractFailure } from "@/omh/contracts-failure";
+import { contractFailure, unwrapFailure } from "@/omh/contracts-failure";
 import {
 	ContractError,
 	type CreateContractRequest,
@@ -146,17 +146,34 @@ async function validatedContractRequest(
 
 async function completeFailedCommand(recordId: string, error: unknown): Promise<Response> {
 	const known = contractFailure(error);
-	if (!known) throw error;
-	const body = { error: { code: known.code, message: known.message } };
-	await getDb()
-		.update(agenticCommandRecords)
-		.set({
-			state: "completed",
-			responseStatus: known.status,
-			responseBody: JSON.stringify(body),
-			completedAt: new Date(),
-		})
-		.where(eq(agenticCommandRecords.id, recordId));
+	// An unrecorded failure reaches the API error handler as the platform's own error.
+	if (!known) throw unwrapFailure(error);
+	const body = {
+		error: {
+			code: known.code,
+			message: known.message,
+			...(known.reason ? { reason: known.reason } : {}),
+		},
+	};
+	try {
+		// A commit whose answer was lost may already have completed the command with its true
+		// receipt: only a command that is still pending records a failure.
+		await getDb()
+			.update(agenticCommandRecords)
+			.set({
+				state: "completed",
+				responseStatus: known.status,
+				responseBody: JSON.stringify(body),
+				completedAt: new Date(),
+			})
+			.where(
+				and(eq(agenticCommandRecords.id, recordId), eq(agenticCommandRecords.state, "pending")),
+			);
+	} catch (recordingError) {
+		// A call limit fails this write too: the command stays pending and the caller gets the
+		// platform's own error, with its reason, instead of this answer.
+		throw unwrapFailure(recordingError);
+	}
 	return Response.json(body, { status: known.status });
 }
 

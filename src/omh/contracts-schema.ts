@@ -71,6 +71,8 @@ export class ContractError extends Error {
 		public readonly code: string,
 		message: string,
 		public readonly status: 400 | 402 | 409 | 413 | 423 | 429 | 502 | 503 = 400,
+		/** The platform client's stable error code when a platform call raised this; never its message. */
+		public readonly reason?: string,
 	) {
 		super(message);
 		this.name = "ContractError";

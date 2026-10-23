@@ -87,9 +87,9 @@ Poll the detail endpoint with a delay appropriate for human signing; increase th
 
 ## Operational failures
 
-Errors use `{ "error": { "code": "...", "message": "..." } }`. Missing storage or mail configuration returns `503` before a draft is created. A mail provider rejection returns `502 EMAIL_DELIVERY_FAILED`; the partially prepared contract remains visible as a draft. The failed response is replayed for the original key, so retries cannot send duplicate invitations. Review that draft and delivery state before deliberately creating a replacement contract with a new key.
+Errors use `{ "error": { "code": "...", "message": "..." } }`. When a hosting platform service raised the failure, the error also carries `reason`, the platform client's stable error code (for example `gateway_unavailable` or `database_unavailable`); it never contains a platform message or SQL. Missing storage or mail configuration returns `503` before a draft is created. A mail provider rejection returns `502 EMAIL_DELIVERY_FAILED`; the partially prepared contract remains visible as a draft. The failed response is replayed for the original key, so retries cannot send duplicate invitations. Review that draft and delivery state before deliberately creating a replacement contract with a new key.
 
-The hosting platform's own refusals after the draft exists are recorded and replayed the same way, and the draft's signing link stays inactive:
+The hosting platform's own refusals and unconfirmed calls are recorded and replayed the same way. Unless the message says otherwise, the draft's signing link stays inactive:
 
 | Status | Code | Meaning |
 | --- | --- | --- |
@@ -97,9 +97,21 @@ The hosting platform's own refusals after the draft exists are recorded and repl
 | `423` | `MAIL_SENDER_SUSPENDED` | Sending is suspended after bounces or complaints; no invitation was sent. |
 | `402` | `PAID_PLAN_REQUIRED`, `INSUFFICIENT_ORGANIZATION_CREDITS`, `PROJECT_BUDGET_EXCEEDED` | The workspace cannot pay for the email; no invitation was sent. |
 | `503` | `PLATFORM_CONFIGURATION_INVALID` | A platform service refused the request, usually a sender address that the mail binding does not list; no invitation was sent. |
-| `503` | `EMAIL_DELIVERY_UNCERTAIN`, `PLATFORM_SERVICE_UNAVAILABLE` | The invitation may or may not have been delivered. Check with the recipient, then create a new request with a new key. |
+| `503` | `EMAIL_DELIVERY_UNCERTAIN` | The mail gateway accepted the request but could not yet confirm delivery, so the invitation may or may not have been delivered. Check with the recipient, then create a new request with a new key. |
+| `503` | `PLATFORM_SERVICE_UNAVAILABLE` | A platform service did not confirm a step. `reason` is the platform's code (`gateway_unavailable`, `gateway_timeout`, `gateway_response_invalid` or `database_unavailable`) and the message says what is known for the step that failed, as listed below. |
 
-Unexpected interruption after a command is claimed leaves the original command pending. It will not be automatically repeated because delivery may already have occurred; the operator should inspect the draft and mail state before taking further action. Such errors, and every other unexpected API failure, answer JSON (`INTERNAL_ERROR`, `PLATFORM_SERVICE_ERROR` or `DATABASE_ERROR`) with a stable `reason` code instead of plain text.
+What the message of `PLATFORM_SERVICE_UNAVAILABLE` says depends on the step that was in progress:
+
+| Step | What is known |
+| --- | --- |
+| Saving the draft | The database did not confirm saving the draft. Nothing was uploaded and no invitation was sent. Create a new request with a new key. |
+| Uploading the PDF | File storage did not confirm the upload. No invitation was sent; the draft is kept and its signing link stays inactive. Create a new request with a new key. |
+| Sending the invitation | The invitation may or may not have been delivered. The draft is kept and its signing link stays inactive. Check the contract list, then create a new request with a new key. |
+| Activating the signing link | The invitation was sent, but the database did not confirm activating its signing link, so the link may not work. Check the contract list: if the contract is still a draft, create a new request with a new key; the recipient then receives a second email. |
+
+A recorded failure never replaces a success that the same command already recorded.
+
+Unexpected interruption after a command is claimed leaves the original command pending. It will not be automatically repeated because delivery may already have occurred; the operator should inspect the draft and mail state before taking further action. Such errors, and every other unexpected API failure, answer JSON (`INTERNAL_ERROR`, `PLATFORM_SERVICE_ERROR` or `DATABASE_ERROR`) instead of plain text; the last two carry a stable `reason` code. The same happens when the platform also refuses the write that would record a failure, for example once the call limit of the request is used up: the answer is then `PLATFORM_SERVICE_ERROR` (or `DATABASE_ERROR`) with its `reason`, and the command stays pending instead of replaying.
 
 The platform's `reason` goes only to the administrator who calls this API, with the console session or a Bearer token. The signer and download-link routes answer the same failure without it, because a code such as `paid_plan_required` or `project_budget_exceeded` would tell a recipient about the sender's plan or budget.
 

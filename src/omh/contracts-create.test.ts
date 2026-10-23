@@ -10,11 +10,12 @@ import { agenticApiTokens, agenticCommandRecords } from "@/db/agentic-access/tab
 import { hashHistoryCredential } from "@/db/history-access/request";
 import { historySessions } from "@/db/history-access/table";
 import { withDatabase } from "@/db/setup";
+import { apiHono } from "@/hono/api";
 import contractsEndpoint from "@/hono/api/contracts";
 import { createHono } from "@/hono/factory";
 import { createAdminCsrfToken, withAdminRequestScope } from "./auth";
 import { authorizeHostedRequest } from "./auth-gate";
-import type { CreateContractRequest } from "./contracts-schema";
+import { ContractError, type CreateContractRequest } from "./contracts-schema";
 import { setOmhMailTransport } from "./mail";
 import { createOmhDocumentsBucket, type OmhStorageEnv } from "./storage";
 
@@ -36,9 +37,14 @@ describe("bounded contract creation through private OMH adapters", () => {
 	let mailUncertain: boolean;
 	let mailRefusal: { status: number; code: string } | null;
 	let commitRejected: boolean;
+	let transactionThrows: number | null;
+	let storageDown: boolean;
+	let recordingDown: boolean;
 	let deliveredKey: string | null;
 	let browser: boolean;
 	let csrfToken: string;
+	const refusesRecording = (query: CustomerDatabaseQuery) =>
+		recordingDown && query.text.startsWith('update "agentic_command_records"');
 
 	beforeEach(async () => {
 		physicalCalls = 0;
@@ -48,6 +54,9 @@ describe("bounded contract creation through private OMH adapters", () => {
 		mailUncertain = false;
 		mailRefusal = null;
 		commitRejected = false;
+		transactionThrows = null;
+		storageDown = false;
+		recordingDown = false;
 		deliveredKey = null;
 		browser = false;
 		csrfToken = await createAdminCsrfToken(session);
@@ -75,6 +84,7 @@ describe("bounded contract creation through private OMH adapters", () => {
 				physicalCalls++;
 				const query = value as CustomerDatabaseQuery;
 				queries.push(query);
+				if (refusesRecording(query)) throw new Error("Too many subrequests");
 				if (query.text.includes('"agentic_api_tokens"')) {
 					return result([orderedRow(agenticApiTokens, currentTokenRow())]);
 				}
@@ -99,6 +109,9 @@ describe("bounded contract creation through private OMH adapters", () => {
 				physicalCalls++;
 				const batch = value as readonly CustomerDatabaseQuery[];
 				batches.push(batch);
+				// An infrastructure failure, for example a call limit: the runtime client reports it as
+				// database_unavailable and the thrown text must never reach the response.
+				if (batches.length === transactionThrows) throw new Error("Too many subrequests");
 				if (batches.length === 2 && commitRejected)
 					return { type: "ohmyhost.database-error/v1", sqlstate: "40001" };
 				return batch.map((query) => result(query.text.startsWith("select") ? [{ guard: 1 }] : []));
@@ -108,6 +121,7 @@ describe("bounded contract creation through private OMH adapters", () => {
 			OHMYHOST_STORAGE_GATEWAY: {
 				fetch: async (request) => {
 					physicalCalls++;
+					if (storageDown) throw new Error("Too many subrequests");
 					const path = new URL(request.url).pathname;
 					if (path === "/v1/uploads/complete")
 						return Response.json({
@@ -182,7 +196,9 @@ describe("bounded contract creation through private OMH adapters", () => {
 		vi.restoreAllMocks();
 	});
 
-	function create() {
+	function create(
+		router: { fetch(request: Request, env: Env): Response | Promise<Response> } = app,
+	) {
 		return withAdminRequestScope(() =>
 			withDatabase(env, async () => {
 				const request = new Request("https://sign.example.com/api/contracts", {
@@ -201,7 +217,7 @@ describe("bounded contract creation through private OMH adapters", () => {
 					body: JSON.stringify(input),
 				});
 				const gate = await authorizeHostedRequest(request, env);
-				return "response" in gate ? gate.response : app.fetch(gate.request, env);
+				return "response" in gate ? gate.response : router.fetch(gate.request, env);
 			}),
 		);
 	}
@@ -265,10 +281,12 @@ describe("bounded contract creation through private OMH adapters", () => {
 			// uncertain mail is answered and recorded, so its key replays instead of staying "running".
 			const response = await create();
 			expect(response.status).toBe(failure === "storage" ? 500 : 503);
-			if (failure === "mail")
-				await expect(response.json()).resolves.toMatchObject({
-					error: { code: "EMAIL_DELIVERY_UNCERTAIN" },
-				});
+			if (failure === "mail") {
+				const body = (await response.json()) as { error: Record<string, unknown> };
+				expect(body).toMatchObject({ error: { code: "EMAIL_DELIVERY_UNCERTAIN" } });
+				// No platform call raised it, so there is no platform code to report.
+				expect(body.error).not.toHaveProperty("reason");
+			}
 			expect(batches).toHaveLength(1);
 			expect(
 				batches[0]?.some(
@@ -283,21 +301,56 @@ describe("bounded contract creation through private OMH adapters", () => {
 	});
 
 	it.each([
-		["bearer", 429, "mail_send_daily_limit", 429, "MAIL_DAILY_LIMIT"],
-		["bearer", 423, "mail_reputation_suspended", 423, "MAIL_SENDER_SUSPENDED"],
-		["bearer", 402, "paid_plan_required", 402, "PAID_PLAN_REQUIRED"],
-		["browser", 402, "insufficient_organization_credits", 402, "INSUFFICIENT_ORGANIZATION_CREDITS"],
-		["browser", 402, "project_budget_exceeded", 402, "PROJECT_BUDGET_EXCEEDED"],
-		["bearer", 400, "invalid_request", 503, "PLATFORM_CONFIGURATION_INVALID"],
-		["browser", 502, "mail_rejected", 502, "EMAIL_DELIVERY_FAILED"],
-		["bearer", 503, "mail_gateway_unavailable", 503, "PLATFORM_SERVICE_UNAVAILABLE"],
-	] as const)("answers and records a %s gateway refusal %i %s as HTTP %i %s, within ten calls", async (mode, status, code, httpStatus, apiCode) => {
+		["bearer", 429, "mail_send_daily_limit", 429, "MAIL_DAILY_LIMIT", "mail_send_limit_exceeded"],
+		[
+			"bearer",
+			423,
+			"mail_reputation_suspended",
+			423,
+			"MAIL_SENDER_SUSPENDED",
+			"mail_reputation_suspended",
+		],
+		["bearer", 402, "paid_plan_required", 402, "PAID_PLAN_REQUIRED", "paid_plan_required"],
+		[
+			"browser",
+			402,
+			"insufficient_organization_credits",
+			402,
+			"INSUFFICIENT_ORGANIZATION_CREDITS",
+			"insufficient_organization_credits",
+		],
+		[
+			"browser",
+			402,
+			"project_budget_exceeded",
+			402,
+			"PROJECT_BUDGET_EXCEEDED",
+			"project_budget_exceeded",
+		],
+		[
+			"bearer",
+			400,
+			"invalid_request",
+			503,
+			"PLATFORM_CONFIGURATION_INVALID",
+			"gateway_request_invalid",
+		],
+		["browser", 502, "mail_rejected", 502, "EMAIL_DELIVERY_FAILED", "mail_rejected"],
+		[
+			"bearer",
+			503,
+			"mail_gateway_unavailable",
+			503,
+			"PLATFORM_SERVICE_UNAVAILABLE",
+			"gateway_unavailable",
+		],
+	] as const)("answers and records a %s gateway refusal %i %s as HTTP %i %s with reason %s, within ten calls", async (mode, status, code, httpStatus, apiCode, reason) => {
 		browser = mode === "browser";
 		mailRefusal = { status, code };
 		const response = await create();
 		const body = await response.json();
 		expect(response.status).toBe(httpStatus);
-		expect(body).toMatchObject({ error: { code: apiCode } });
+		expect(body).toMatchObject({ error: { code: apiCode, reason } });
 		expect(physicalCalls).toBeLessThanOrEqual(10);
 		// The draft stays inactive and the command is completed with this exact answer.
 		expect(batches).toHaveLength(1);
@@ -307,6 +360,119 @@ describe("bounded contract creation through private OMH adapters", () => {
 				query.values.includes(JSON.stringify(body)),
 		);
 		expect(receipt?.values).toContain("completed");
+	});
+
+	it.each([
+		{
+			phase: "database",
+			fail: () => {
+				transactionThrows = 1;
+			},
+			reason: "database_unavailable",
+			says: [/did not confirm saving the draft/, /nothing was uploaded/, /no invitation was sent/],
+			doesNotSay: /may or may not have been delivered/,
+			mailReached: false,
+		},
+		{
+			phase: "storage",
+			fail: () => {
+				storageDown = true;
+			},
+			reason: "gateway_unavailable",
+			says: [/file storage did not confirm the PDF upload/, /no invitation was sent/],
+			doesNotSay: /may or may not have been delivered/,
+			mailReached: false,
+		},
+		{
+			phase: "mail",
+			fail: () => {
+				mailRefusal = { status: 503, code: "mail_gateway_unavailable" };
+			},
+			reason: "gateway_unavailable",
+			says: [/may or may not have been delivered/, /signing link stays inactive/],
+			doesNotSay: /link may not work/,
+			mailReached: true,
+		},
+		{
+			phase: "activation",
+			fail: () => {
+				transactionThrows = 2;
+			},
+			reason: "database_unavailable",
+			says: [/invitation was sent/, /link may not work/, /second email/],
+			doesNotSay: /no invitation was sent/,
+			mailReached: true,
+		},
+	])("records the platform code and says which step failed: $phase", async ({
+		phase,
+		fail,
+		reason,
+		says,
+		doesNotSay,
+		mailReached,
+	}) => {
+		fail();
+		const response = await create();
+		const body = (await response.json()) as {
+			error: { code: string; message: string; reason?: string };
+		};
+		expect(response.status).toBe(503);
+		expect(body.error).toMatchObject({ code: "PLATFORM_SERVICE_UNAVAILABLE", reason });
+		for (const pattern of says) expect(body.error.message).toMatch(pattern);
+		expect(body.error.message).not.toMatch(doesNotSay);
+		expect(JSON.stringify(body)).not.toContain("Too many subrequests");
+		// The answer is recorded for the original key, exactly as sent.
+		const receipt = queries.find(
+			(query) =>
+				query.text.startsWith('update "agentic_command_records"') &&
+				query.values.includes(JSON.stringify(body)),
+		);
+		expect(receipt?.values).toContain("completed");
+		// Only the mail and activation steps come after the request reached the mail gateway.
+		expect(deliveredKey === null).toBe(!mailReached);
+		// Activation is the tenth platform call, so recording its failure is an eleventh: under a
+		// hosted limit of ten that write is refused too, and the caller then gets the unrecorded
+		// PLATFORM_SERVICE_ERROR instead of this answer.
+		expect(physicalCalls).toBeLessThanOrEqual(phase === "activation" ? 11 : 10);
+	});
+
+	it("records a contract error that a step raises under its own code and status", async () => {
+		const put = async () => {
+			throw new ContractError("SOURCE_PDF_TOO_LARGE", "Too large", 413);
+		};
+		env = { ...env, DOCUMENTS_BUCKET: { put } as unknown as R2Bucket };
+		const response = await create();
+		expect(response.status).toBe(413);
+		await expect(response.json()).resolves.toEqual({
+			error: { code: "SOURCE_PDF_TOO_LARGE", message: "Too large" },
+		});
+	});
+
+	it("answers a failure it cannot record as the platform's own error, with its reason", async () => {
+		// A call limit makes every later call fail, including the write that records the failure.
+		transactionThrows = 2;
+		recordingDown = true;
+		const response = await create(apiHono);
+		expect(response.status).toBe(503);
+		await expect(response.json()).resolves.toEqual({
+			error: {
+				code: "PLATFORM_SERVICE_ERROR",
+				message: "A platform service failed. Retry only if it is marked retryable.",
+				reason: "database_unavailable",
+				retryable: true,
+			},
+		});
+		// The invitation went out before the activation failed.
+		expect(deliveredKey).toMatch(/^sign\./);
+	});
+
+	it("hands the platform's own error, not the step marker, to the API error handler", async () => {
+		commitRejected = true;
+		const response = await create(apiHono);
+		expect(response.status).toBe(503);
+		await expect(response.json()).resolves.toMatchObject({
+			error: { code: "DATABASE_ERROR", reason: "40001", retryable: true },
+		});
 	});
 
 	it("cannot report success when the final atomic activation and receipt transaction fails", async () => {

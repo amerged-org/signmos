@@ -20,6 +20,7 @@ import {
 } from "@/db/envelope/table";
 import { getDb } from "@/db/setup";
 import { sha256Hex } from "@/hono/api/envelope-route-helpers";
+import { type CreationPhase, CreationPhaseError } from "./contracts-failure";
 import { prepareContractPdf } from "./contracts-pdf";
 import {
 	ContractError,
@@ -61,7 +62,7 @@ export async function createAndSendClaimedContract(input: {
 	const fieldWrites = [];
 	for (let offset = 0; offset < fieldRows.length; offset += 10)
 		fieldWrites.push(db.insert(envelopeFields).values(fieldRows.slice(offset, offset + 10)));
-	await db.batch([
+	const draftStatements = [
 		guardStatement(sql`select 1 / case when exists (select 1 from ${agenticCommandRecords}
 			where ${agenticCommandRecords.id} = ${input.recordId} and ${agenticCommandRecords.state} = ${"pending"}
 			and ${agenticCommandRecords.documentId} is null for update) then 1 else 0 end as guard`),
@@ -122,18 +123,23 @@ export async function createAndSendClaimedContract(input: {
 					eq(agenticCommandRecords.state, "pending"),
 				),
 			),
-	]);
+	];
+	await inPhase("database", () => db.batch(draftStatements));
 	// Persist the locator and pending command first, including when upload or delivery is uncertain.
-	await input.documentsBucket.put(r2Key, prepared.bytes, {
-		httpMetadata: { contentType: "application/pdf" },
-	});
-	await deliverTransactionalEmail(
-		buildPartnerVerificationEmail({
-			email: input.request.recipient.email,
-			recipientName: input.request.recipient.name,
-			verificationUrl: toAbsoluteDeliveryUrl(relativeUrl, input.emailDelivery),
+	await inPhase("storage", () =>
+		input.documentsBucket.put(r2Key, prepared.bytes, {
+			httpMetadata: { contentType: "application/pdf" },
 		}),
-		input.emailDelivery,
+	);
+	await inPhase("mail", () =>
+		deliverTransactionalEmail(
+			buildPartnerVerificationEmail({
+				email: input.request.recipient.email,
+				recipientName: input.request.recipient.name,
+				verificationUrl: toAbsoluteDeliveryUrl(relativeUrl, input.emailDelivery),
+			}),
+			input.emailDelivery,
+		),
 	);
 	const summary: ContractSummary = {
 		id: envelopeId,
@@ -145,7 +151,7 @@ export async function createAndSendClaimedContract(input: {
 		downloadUrl: null,
 	};
 	const sentAt = new Date();
-	await db.batch([
+	const activationStatements = [
 		// Lock before evaluating the next statement's snapshot, including audit-only deletion intent.
 		guardStatement(sql`select ${envelopes.id} from ${envelopes}
 			inner join ${agenticCommandRecords} on ${agenticCommandRecords.documentId} = ${envelopes.id}
@@ -215,8 +221,22 @@ export async function createAndSendClaimedContract(input: {
 				completedAt: sentAt,
 			})
 			.where(eq(agenticCommandRecords.id, input.recordId)),
-	]);
+	];
+	await inPhase("activation", () => db.batch(activationStatements));
 	return summary;
+}
+
+/**
+ * Marks which step of creation raised a failure, because the platform's error codes do not say
+ * which service failed. The classifier looks through the marker, so a contract error that a step
+ * raises still keeps its own code and status.
+ */
+async function inPhase<Result>(phase: CreationPhase, run: () => Promise<Result>): Promise<Result> {
+	try {
+		return await run();
+	} catch (error) {
+		throw new CreationPhaseError(phase, error);
+	}
 }
 
 function guardStatement(statement: SQL): { toSQL: () => { sql: string; params: unknown[] } } {
