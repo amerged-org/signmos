@@ -1,7 +1,7 @@
 import { CustomerRuntimeError, CustomerRuntimeGatewayError } from "@ohmyhost/customer-runtime";
 import { DrizzleQueryError } from "drizzle-orm";
 import { EmailDeliveryError } from "@/db/envelope";
-import { CreationPhaseError, contractFailure, unwrapFailure } from "./contracts-failure";
+import { CreationPhaseError, contractFailure } from "./contracts-failure";
 import { ContractError } from "./contracts-schema";
 import { MailDeliveryUncertainError } from "./mail";
 
@@ -165,34 +165,78 @@ describe("which step of creation an unconfirmed platform call interrupted", () =
 		expect(contractFailure(new CreationPhaseError(phase, known))).toBe(known);
 	});
 
-	it("leaves bugs and unmapped codes in any step to the caller, which rethrows the cause", () => {
-		const bug = new TypeError("boom");
-		const unmapped = gateway("storage_conflict");
+	it("leaves bugs and unmapped codes in any step to the caller", () => {
 		for (const cause of [
-			bug,
-			unmapped,
+			new TypeError("boom"),
+			gateway("storage_conflict"),
 			new CustomerRuntimeError("database_query_invalid", false),
-		]) {
-			const wrapped = new CreationPhaseError("database", cause);
-			expect(contractFailure(wrapped)).toBeNull();
-			expect(unwrapFailure(wrapped)).toBe(cause);
-		}
-		expect(unwrapFailure(bug)).toBe(bug);
+		])
+			expect(contractFailure(new CreationPhaseError("database", cause))).toBeNull();
 	});
 });
 
-describe("the error an unrecorded failure hands to the API error handler", () => {
-	it("is the platform's own error, without the step marker or drizzle's query error around it", () => {
-		const platform = gateway("gateway_unavailable");
-		// Drizzle wraps whatever the platform client raised for a query it built, with SQL in its text.
-		const query = new DrizzleQueryError('update "agentic_command_records"', ["secret"], platform);
-		expect(unwrapFailure(query)).toBe(platform);
-		expect(unwrapFailure(new CreationPhaseError("activation", query))).toBe(platform);
-		expect(unwrapFailure(platform)).toBe(platform);
+describe("a failure behind the query layer's wrapper", () => {
+	const statement = 'update "agentic_command_records" set "state" = $1';
+	/** Drizzle wraps whatever the platform client raised for a query it built, with SQL in its text. */
+	const failedQuery = (cause?: Error) => new DrizzleQueryError(statement, ["secret"], cause);
+
+	it("records the platform error behind two query errors, with the reason and the database wording", () => {
+		const failure = contractFailure(
+			new CreationPhaseError(
+				"database",
+				failedQuery(failedQuery(new CustomerRuntimeError("database_unavailable", true))),
+			),
+		);
+		expect(failure).toBeInstanceOf(ContractError);
+		expect(failure).toMatchObject({
+			status: 503,
+			code: "PLATFORM_SERVICE_UNAVAILABLE",
+			reason: "database_unavailable",
+		});
+		expect(failure?.message).toMatch(/did not confirm saving the draft/);
+		expect(failure?.message).not.toContain("agentic_command_records");
+		expect(failure?.message).not.toContain("secret");
 	});
 
-	it("stays the wrapper when nothing is wrapped", () => {
-		const empty = new CreationPhaseError("storage", undefined);
-		expect(unwrapFailure(empty)).toBe(empty);
+	it.each([
+		["database", /did not confirm saving the draft/],
+		["storage", /file storage did not confirm the PDF upload/],
+		["mail", /may or may not have been delivered/],
+		["activation", /did not confirm activating its signing link/],
+	] as const)("words a %s failure behind the wrapper like one without it", (phase, wording) => {
+		const failure = contractFailure(
+			new CreationPhaseError(phase, failedQuery(gateway("gateway_timeout"))),
+		);
+		expect(failure).toMatchObject({
+			code: "PLATFORM_SERVICE_UNAVAILABLE",
+			reason: "gateway_timeout",
+		});
+		expect(failure?.message).toMatch(wording);
+	});
+
+	it("records a refusal behind a plain error's cause as well", () => {
+		const failure = contractFailure(
+			new CreationPhaseError(
+				"mail",
+				new Error("the send failed", { cause: gateway("mail_send_limit_exceeded") }),
+			),
+		);
+		expect(failure).toMatchObject({
+			status: 429,
+			code: "MAIL_DAILY_LIMIT",
+			reason: "mail_send_limit_exceeded",
+		});
+	});
+
+	it("records the platform error of a failure that carries no step marker", () => {
+		expect(contractFailure(failedQuery(gateway("gateway_unavailable")))).toMatchObject({
+			code: "PLATFORM_SERVICE_UNAVAILABLE",
+			reason: "gateway_unavailable",
+		});
+	});
+
+	it("leaves bugs and unmapped codes behind the wrapper to the caller", () => {
+		for (const cause of [new TypeError("boom"), gateway("storage_conflict"), undefined])
+			expect(contractFailure(new CreationPhaseError("database", failedQuery(cause)))).toBeNull();
 	});
 });

@@ -1,3 +1,5 @@
+import { CustomerRuntimeGatewayError } from "@ohmyhost/customer-runtime";
+import { DrizzleQueryError } from "drizzle-orm";
 import { apiHono } from "@/hono/api";
 import { useCreationHarness } from "./contracts-create-harness";
 import { ContractError } from "./contracts-schema";
@@ -249,13 +251,87 @@ describe("bounded contract creation through private OMH adapters", () => {
 		expect(creation.deliveredKey).toMatch(/^sign\./);
 	});
 
-	it("hands the platform's own error, not the step marker, to the API error handler", async () => {
+	it("answers an unrecorded failure with the platform's own code, found behind the step marker", async () => {
 		creation.commitRejected = true;
 		const response = await creation.create(apiHono);
 		expect(response.status).toBe(503);
 		await expect(response.json()).resolves.toMatchObject({
 			error: { code: "DATABASE_ERROR", reason: "40001", retryable: true },
 		});
+	});
+
+	it("records a platform failure that a step raised behind the query layer's wrapper, with that step's wording", async () => {
+		// What a query that drizzle builds raises: the platform's error inside drizzle's query error.
+		const raised = new DrizzleQueryError(
+			'insert into "source_documents" ("id") values ($1)',
+			["secret-parameter"],
+			new CustomerRuntimeGatewayError("gateway_unavailable", null, true),
+		);
+		creation.env = {
+			...creation.env,
+			DOCUMENTS_BUCKET: {
+				put: async () => {
+					throw raised;
+				},
+			} as unknown as R2Bucket,
+		};
+		const response = await creation.create();
+		const body = (await response.json()) as { error: { message: string } };
+		expect(response.status).toBe(503);
+		expect(body.error).toMatchObject({
+			code: "PLATFORM_SERVICE_UNAVAILABLE",
+			reason: "gateway_unavailable",
+		});
+		expect(body.error.message).toMatch(/file storage did not confirm the PDF upload/);
+		expect(JSON.stringify(body)).not.toMatch(/source_documents|secret-parameter/);
+		// The receipt for the original key is exactly this answer, and no invitation went out.
+		const receipt = creation.queries.find(
+			(query) =>
+				query.text.startsWith('update "agentic_command_records"') &&
+				query.values.includes(JSON.stringify(body)),
+		);
+		expect(receipt?.values).toContain("completed");
+		expect(creation.deliveredKey).toBeNull();
+		expect(creation.physicalCalls).toBeLessThanOrEqual(10);
+	});
+
+	it("answers a claim that the platform refuses with its code, not with the failed query", async () => {
+		creation.claimFailure = "unavailable";
+		const response = await creation.create(apiHono);
+		expect(response.status).toBe(503);
+		const body = await response.json();
+		expect(body).toEqual({
+			error: {
+				code: "PLATFORM_SERVICE_ERROR",
+				message: "A platform service failed. Retry only if it is marked retryable.",
+				reason: "database_unavailable",
+				retryable: true,
+			},
+		});
+		expect(JSON.stringify(body)).not.toMatch(/agentic_command_records|Too many subrequests/);
+		// Nothing was created: no draft transaction, no upload, no invitation.
+		expect(creation.batches).toHaveLength(0);
+		expect(creation.deliveredKey).toBeNull();
+		expect(creation.physicalCalls).toBeLessThanOrEqual(10);
+	});
+
+	it("answers a SQL error of the claim as DATABASE_ERROR JSON, without SQL text or parameters", async () => {
+		creation.claimFailure = "statement";
+		const response = await creation.create(apiHono);
+		expect(response.status).toBe(500);
+		const body = await response.json();
+		expect(body).toEqual({
+			error: {
+				code: "DATABASE_ERROR",
+				message: "The database rejected the request.",
+				reason: "23505",
+				retryable: false,
+			},
+		});
+		expect(JSON.stringify(body)).not.toMatch(
+			/agentic_command_records|insert into|bounded-contract-1/,
+		);
+		expect(creation.batches).toHaveLength(0);
 	});
 
 	it("cannot report success when the final atomic activation and receipt transaction fails", async () => {

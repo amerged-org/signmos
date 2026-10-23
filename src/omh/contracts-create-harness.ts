@@ -52,6 +52,8 @@ export interface CreationHarness {
 	transactionThrows: number | null;
 	storageDown: boolean;
 	recordingDown: boolean;
+	/** The insert that claims the idempotency key fails like a call limit, or with a SQL error. */
+	claimFailure: "unavailable" | "statement" | null;
 	create(router?: Router): Promise<Response>;
 }
 
@@ -73,6 +75,7 @@ export function useCreationHarness(): CreationHarness {
 		transactionThrows: null,
 		storageDown: false,
 		recordingDown: false,
+		claimFailure: null,
 		create(router = app) {
 			return withAdminRequestScope(() =>
 				withDatabase(harness.env, async () => {
@@ -97,8 +100,22 @@ export function useCreationHarness(): CreationHarness {
 			);
 		},
 	};
-	const refusesRecording = (query: CustomerDatabaseQuery) =>
-		harness.recordingDown && query.text.startsWith('update "agentic_command_records"');
+	/**
+	 * What the database double answers instead of the query when the scenario makes it fail:
+	 * a thrown error is an infrastructure failure such as a call limit (the runtime client reports
+	 * it as database_unavailable and the thrown text must never reach a response), an answer is a
+	 * SQL error of the statement itself.
+	 */
+	const failedAnswer = (query: CustomerDatabaseQuery): unknown => {
+		if (harness.recordingDown && query.text.startsWith('update "agentic_command_records"'))
+			throw new Error("Too many subrequests");
+		// A statement with `returning` reaches the double wrapped in a result CTE.
+		if (harness.claimFailure && query.text.includes('insert into "agentic_command_records"')) {
+			if (harness.claimFailure === "unavailable") throw new Error("Too many subrequests");
+			return { type: "ohmyhost.database-error/v1", sqlstate: "23505" };
+		}
+		return undefined;
+	};
 
 	beforeEach(async () => {
 		harness.physicalCalls = 0;
@@ -111,6 +128,7 @@ export function useCreationHarness(): CreationHarness {
 		harness.transactionThrows = null;
 		harness.storageDown = false;
 		harness.recordingDown = false;
+		harness.claimFailure = null;
 		harness.deliveredKey = null;
 		harness.browser = false;
 		csrfToken = await createAdminCsrfToken(session);
@@ -140,7 +158,8 @@ export function useCreationHarness(): CreationHarness {
 				harness.physicalCalls++;
 				const query = value as CustomerDatabaseQuery;
 				harness.queries.push(query);
-				if (refusesRecording(query)) throw new Error("Too many subrequests");
+				const failed = failedAnswer(query);
+				if (failed !== undefined) return failed;
 				if (query.text.includes('"agentic_api_tokens"')) {
 					return result([orderedRow(agenticApiTokens, currentTokenRow())]);
 				}

@@ -1,7 +1,7 @@
 import { CustomerRuntimeError } from "@ohmyhost/customer-runtime";
-import { DrizzleQueryError } from "drizzle-orm";
 import { EmailDeliveryError } from "@/db/envelope";
 import { ContractError } from "./contracts-schema";
+import { findCause } from "./error-cause";
 import { MailDeliveryUncertainError } from "./mail";
 
 const DRAFT_KEPT = "The draft was kept and its signing link stays inactive.";
@@ -20,28 +20,37 @@ export class CreationPhaseError extends Error {
 	}
 }
 
-/**
- * What a caller rethrows when a failure is not recorded: the platform's own error. The API error
- * handler reads its code, and neither the step marker nor drizzle's query error, which wraps what
- * the platform client raised for a statement it built (its text carries SQL), shows it.
- */
-export function unwrapFailure(error: unknown): unknown {
-	if (error instanceof CreationPhaseError || error instanceof DrizzleQueryError)
-		return error.cause === undefined ? error : unwrapFailure(error.cause);
-	return error;
-}
+/** The failures that are known well enough to record, replay and explain. */
+type RecordableFailure =
+	| ContractError
+	| EmailDeliveryError
+	| MailDeliveryUncertainError
+	| CustomerRuntimeError;
+
+const isCreationPhaseError = (candidate: unknown): candidate is CreationPhaseError =>
+	candidate instanceof CreationPhaseError;
+const isRecordable = (candidate: unknown): candidate is RecordableFailure =>
+	candidate instanceof ContractError ||
+	candidate instanceof EmailDeliveryError ||
+	candidate instanceof MailDeliveryUncertainError ||
+	candidate instanceof CustomerRuntimeError;
 
 /**
  * Failures after a command is claimed that are known well enough to record, replay and explain.
  * The platform's clients raise typed errors (the hosted Worker keeps no console output, so the
  * response is the only place the operator sees the cause); anything else is a bug and escapes.
+ * The known error is found behind the wrappers around it (the step marker, drizzle's query error
+ * and any other `cause`), so that a platform error is recorded with its code and the wording of
+ * the step that raised it however deep it sits. The caller rethrows an unrecorded failure as it
+ * is: the API error handler looks through the same wrappers.
  */
 export function contractFailure(error: unknown): ContractError | null {
-	if (error instanceof CreationPhaseError) return failureAt(error.phase, error.cause);
-	return failureAt(null, error);
+	const known = findCause(error, isRecordable);
+	if (!known) return null;
+	return failureAt(findCause(error, isCreationPhaseError)?.phase ?? null, known);
 }
 
-function failureAt(phase: CreationPhase | null, error: unknown): ContractError | null {
+function failureAt(phase: CreationPhase | null, error: RecordableFailure): ContractError | null {
 	if (error instanceof ContractError) return error;
 	if (error instanceof EmailDeliveryError)
 		return new ContractError(
@@ -55,7 +64,7 @@ function failureAt(phase: CreationPhase | null, error: unknown): ContractError |
 			`The invitation may or may not have been delivered. ${DRAFT_KEPT} Check with the recipient, then create a new request with a new Idempotency-Key.`,
 			503,
 		);
-	return error instanceof CustomerRuntimeError ? runtimeFailure(error.code, phase) : null;
+	return runtimeFailure(error.code, phase);
 }
 
 /** What is known when a platform call did not answer depends on how far creation had got. */

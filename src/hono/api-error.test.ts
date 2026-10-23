@@ -1,8 +1,19 @@
-import { CustomerDatabaseError, CustomerRuntimeGatewayError } from "@ohmyhost/customer-runtime";
+import {
+	CustomerDatabaseError,
+	CustomerRuntimeError,
+	CustomerRuntimeGatewayError,
+} from "@ohmyhost/customer-runtime";
+import { DrizzleQueryError } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { authorizeHostedRequest } from "@/omh/auth-gate";
+import { CreationPhaseError } from "@/omh/contracts-failure";
 import { apiHono } from "./api";
 import { apiErrorResponse } from "./api-error";
+
+const statement = 'insert into "agentic_command_records" ("idempotency_key") values ($1)';
+const parameter = "contract-key-that-must-stay-out-of-the-answer";
+/** What drizzle raises for a query it built, around whatever the platform client raised. */
+const failedQuery = (cause: Error) => new DrizzleQueryError(statement, [parameter], cause);
 
 async function body(response: Response): Promise<unknown> {
 	expect(response.headers.get("content-type")).toContain("application/json");
@@ -67,6 +78,68 @@ describe("unexpected API failures", () => {
 		expect(text).not.toContain("secret detail");
 		const exception = asAdministrator(new HTTPException(413, { message: "too large" }));
 		expect(exception.status).toBe(413);
+	});
+
+	describe("a failure behind the query layer's wrapper", () => {
+		it("answers a platform runtime failure with its code, never with the SQL or its parameters", async () => {
+			const response = asAdministrator(
+				failedQuery(new CustomerRuntimeError("database_unavailable", true)),
+			);
+			expect(response.status).toBe(503);
+			const answer = await body(response);
+			expect(answer).toEqual({
+				error: {
+					code: "PLATFORM_SERVICE_ERROR",
+					message: "A platform service failed. Retry only if it is marked retryable.",
+					reason: "database_unavailable",
+					retryable: true,
+				},
+			});
+			expect(JSON.stringify(answer)).not.toContain("agentic_command_records");
+			expect(JSON.stringify(answer)).not.toContain(parameter);
+		});
+
+		it.each([
+			["23505", 500, false],
+			["40001", 503, true],
+		])("answers a plain SQL error %s as DATABASE_ERROR JSON %i, without SQL text", async (sqlstate, status, retryable) => {
+			const response = asAdministrator(failedQuery(new CustomerDatabaseError(sqlstate)));
+			expect(response.status).toBe(status);
+			const answer = await body(response);
+			expect(answer).toEqual({
+				error: {
+					code: "DATABASE_ERROR",
+					message: "The database rejected the request.",
+					reason: sqlstate,
+					retryable,
+				},
+			});
+			expect(JSON.stringify(answer)).not.toContain("agentic_command_records");
+			expect(JSON.stringify(answer)).not.toContain(parameter);
+		});
+
+		it("finds the platform code through nested wrappers and a creation step marker", async () => {
+			const response = asAdministrator(
+				new CreationPhaseError(
+					"activation",
+					failedQuery(failedQuery(new CustomerRuntimeGatewayError("gateway_timeout", null, true))),
+				),
+			);
+			expect(response.status).toBe(503);
+			await expect(body(response)).resolves.toMatchObject({
+				error: { code: "PLATFORM_SERVICE_ERROR", reason: "gateway_timeout", retryable: true },
+			});
+		});
+
+		it("keeps answering INTERNAL_ERROR for a bug behind the wrapper, without its text", async () => {
+			const response = asAdministrator(failedQuery(new TypeError("secret detail")));
+			expect(response.status).toBe(500);
+			const text = JSON.stringify(await body(response));
+			expect(text).toContain("INTERNAL_ERROR");
+			expect(text).not.toContain("secret detail");
+			expect(text).not.toContain("agentic_command_records");
+			expect(text).not.toContain(parameter);
+		});
 	});
 
 	it("applies to every route mounted below /api", async () => {
