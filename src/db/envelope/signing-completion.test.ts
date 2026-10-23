@@ -195,7 +195,9 @@ describe("truthful signing finalization", () => {
 		expect(state.rows.get(auditEvents)).toHaveLength(2);
 		expect(state.rows.get(finalDocuments)).toHaveLength(1);
 		expect(state.rows.get(envelopes)?.[0]?.status).toBe("completed");
-		expect(put.mock.calls[0]?.[0]).toBe(put.mock.calls[1]?.[0]);
+		// The retry stores under a name of its own: the failed attempt's reservation may have died.
+		expect(put.mock.calls[0]?.[0]).not.toBe(put.mock.calls[1]?.[0]);
+		expect(state.rows.get(finalDocuments)?.[0]?.r2Key).toBe(put.mock.calls[1]?.[0]);
 	});
 
 	it("does not report completion when private document storage is unavailable", async () => {

@@ -152,6 +152,33 @@ describe("OMH private document storage", () => {
 		expect(first.idempotencyKey).not.toBe(second.idempotencyKey);
 	});
 
+	/**
+	 * A name is retained before its upload, so an attempt that failed before the platform reserved
+	 * the name leaves a name that was never stored. Its deletion answers object_not_found, and that
+	 * must not keep the contract's other files from being erased.
+	 */
+	it("treats a name that was never stored as already deleted, but not a gateway failure", async () => {
+		boundary.delete.mockResolvedValueOnce([
+			{ state: "failed", objectKey: "final.pdf", code: "object_not_found", retryable: false },
+			{ state: "completed", objectKey: "source.pdf", deletionId: "deletion" },
+		]);
+		await expect(
+			createOmhDocumentsBucket(env).delete(["final.pdf", "source.pdf"]),
+		).resolves.toBeUndefined();
+		boundary.delete.mockResolvedValueOnce([
+			{
+				state: "failed",
+				objectKey: "final.pdf",
+				code: "storage_gateway_unavailable",
+				retryable: true,
+			},
+		]);
+		await expect(createOmhDocumentsBucket(env).delete("final.pdf")).rejects.toMatchObject({
+			code: "storage_gateway_unavailable",
+			retryable: true,
+		});
+	});
+
 	it("does not acknowledge a partially completed private-file deletion", async () => {
 		boundary.delete.mockResolvedValueOnce([
 			{ state: "pending", objectKey: "source.pdf", retryAt: "2026-10-21T09:01:00Z" },

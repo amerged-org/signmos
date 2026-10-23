@@ -120,7 +120,7 @@ describe("immutable final document artifacts", () => {
 
 		const regenerated = await regenerateFinalDocumentArtifact(legacy, { documentsBucket: bucket });
 		expect(regenerated?.document.r2Key).toMatch(
-			new RegExp(`^envelopes/${envelopeId}/final/[a-f0-9]{64}\\.pdf$`),
+			new RegExp(`^envelopes/${envelopeId}/final/[a-f0-9]{64}-[a-f0-9-]{36}\\.pdf$`),
 		);
 		expect(regenerated?.document.r2Key).not.toBe(legacy.r2Key);
 		expect(dbState.updates[0]?.r2Key).toBe(regenerated?.document.r2Key);
@@ -129,7 +129,7 @@ describe("immutable final document artifacts", () => {
 		expect([...objects.keys()]).toContain(`envelopes/${envelopeId}/source-v1.pdf`);
 	});
 
-	it("reuses the same immutable version after an upload succeeds but the database update fails", async () => {
+	it("stores a retry under a name of its own after an upload succeeds but the database update fails", async () => {
 		const legacy = oldFinalDocument();
 		dbState.rows.set(finalDocuments, [legacy]);
 		dbState.failNextUpdate = true;
@@ -137,9 +137,14 @@ describe("immutable final document artifacts", () => {
 			regenerateFinalDocumentArtifact(legacy, { documentsBucket: bucket }),
 		).rejects.toThrow("database unavailable");
 		const retried = await regenerateFinalDocumentArtifact(legacy, { documentsBucket: bucket });
+		// The platform may have let the first reservation die, so the retry never replays its name.
+		// Both names are retained, and the record points at the retry's.
 		expect(writtenKeys).toHaveLength(2);
-		expect(writtenKeys[0]).toBe(writtenKeys[1]);
-		expect(retried?.document.r2Key).toBe(writtenKeys[0]);
+		expect(writtenKeys[0]).not.toBe(writtenKeys[1]);
+		expect(retried?.document.r2Key).toBe(writtenKeys[1]);
+		expect(
+			new Set((dbState.rows.get(envelopeArtifactVersions) ?? []).map((row) => row.r2Key)),
+		).toEqual(new Set([legacy.r2Key, writtenKeys[0], writtenKeys[1]]));
 	});
 
 	it("does not create another artifact when finalization is retried after commit", async () => {
@@ -147,7 +152,7 @@ describe("immutable final document artifacts", () => {
 		const retried = await finalizeCompletedEnvelope(envelopeId, { documentsBucket: bucket });
 		expect(retried).toEqual(first);
 		expect(writtenKeys).toEqual([first?.r2Key]);
-		expect(first?.r2Key).toMatch(/\/final\/[a-f0-9]{64}\.pdf$/);
+		expect(first?.r2Key).toMatch(/\/final\/[a-f0-9]{64}-[a-f0-9-]{36}\.pdf$/);
 		expect(dbState.rows.get(finalDocuments)).toHaveLength(1);
 	});
 

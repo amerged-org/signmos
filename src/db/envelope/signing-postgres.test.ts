@@ -445,11 +445,13 @@ it("retries one retained signature after a failed upload without replacing conse
 	resetCalls();
 	expect((await complete(true)).status).toBe(200);
 	expect(count()).toBeLessThanOrEqual(10);
-	expect(
-		(
-			await postgres.query<{ r2_key: string }>("SELECT r2_key FROM envelope_artifact_versions")
-		).rows.map((row) => row.r2_key),
-	).toEqual(keys);
+	// The retry stores under a name of its own, since the failed attempt's reservation may have died;
+	// the failed attempt's name stays retained for deletion.
+	const retained = (
+		await postgres.query<{ r2_key: string }>("SELECT r2_key FROM envelope_artifact_versions")
+	).rows.map((row) => row.r2_key);
+	expect(retained).toHaveLength(keys.length + 1);
+	expect(retained).toEqual(expect.arrayContaining(keys));
 	expect(
 		(await postgres.query("SELECT count(*)::integer AS count FROM field_values")).rows,
 	).toEqual([{ count: 2 }]);

@@ -82,12 +82,25 @@ export async function finalizeCompletedEnvelope(
 		);
 	}
 	const artifact = await renderFinalDocumentArtifact(envelopeId, options.documentsBucket, snapshot);
-	const r2Key = `envelopes/${envelopeId}/final/${artifact.sha256}.pdf`;
+	const r2Key = newFinalArtifactKey(envelopeId, artifact.sha256);
 	await registerFinalArtifact(envelopeId, r2Key, snapshot, options.completion);
 	await options.documentsBucket.put(r2Key, artifact.bytes, {
 		httpMetadata: { contentType: artifact.contentType },
 	});
 	return commitFinalArtifact(envelopeId, r2Key, artifact, snapshot, options.completion);
+}
+
+/**
+ * Every attempt to store a final PDF uses a name of its own. The platform reserves an upload under
+ * a name for 300 s and refuses to replay it once less than 60 s remain and no bytes landed (409
+ * upload_expired, "needs a new objectKey and idempotencyKey"), and no other upload may take that
+ * name. An attempt that failed after its reservation, retried by the signer or a download link
+ * hours later, would therefore meet the dead reservation for ever. A fresh name cannot. Each name
+ * is retained before its upload (registerFinalArtifact), so the names of failed attempts are erased
+ * with the rest when the contract is deleted.
+ */
+function newFinalArtifactKey(envelopeId: string, sha256: string): string {
+	return `envelopes/${envelopeId}/final/${sha256}-${crypto.randomUUID()}.pdf`;
 }
 
 export interface SigningFinalizationSnapshot {
@@ -305,8 +318,8 @@ export async function regenerateFinalDocumentArtifact(
 		snapshot,
 	);
 	// OMH logical file names are immutable, including after deletion. Repairing an
-	// older renderer's artifact therefore creates a new content-addressed version.
-	const r2Key = `envelopes/${finalDocument.envelopeId}/final/${artifact.sha256}.pdf`;
+	// artifact therefore stores a new version under a name of its own.
+	const r2Key = newFinalArtifactKey(finalDocument.envelopeId, artifact.sha256);
 	await registerFinalArtifact(
 		finalDocument.envelopeId,
 		r2Key,

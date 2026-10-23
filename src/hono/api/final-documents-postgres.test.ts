@@ -23,6 +23,10 @@ const sourceKey = "source/v1.pdf";
 let postgres: PGlite;
 let objects: Map<string, Uint8Array>;
 let calls: { query: number; transaction: number; files: number; mail: number };
+/** When the platform first reserved an upload under each name. */
+let reservedAt: Map<string, number>;
+/** The next upload fails after its reservation, like a 5xx from the storage provider. */
+let failNextPut = false;
 
 type FinalRow = { id: string; r2_key: string; byte_size: number; sha256: string };
 
@@ -76,8 +80,26 @@ const bucket = {
 			(await postgres.query("SELECT r2_key FROM envelope_artifact_versions WHERE r2_key=$1", [key]))
 				.rows,
 		).toHaveLength(1);
-		// The platform's upload is create-only: a second upload under the same logical name replays
-		// the first one (src/omh/storage.ts) and never replaces what is stored.
+		// The platform reserves an upload under a name for 300 s. A retry under the same name replays
+		// that reservation: it completes if the bytes landed, but once less than 60 s remain and
+		// nothing landed it is refused for good (409 upload_expired, which the runtime client raises
+		// as the non-retryable storage_upload_expired, "needs a new objectKey and idempotencyKey"),
+		// and no other upload may reserve the name. P:apps/storage-gateway/src/runtime.ts upload().
+		const first = reservedAt.get(key);
+		if (first === undefined) reservedAt.set(key, Date.now());
+		else if (!objects.has(key) && Date.now() - first >= 240_000)
+			throw Object.assign(new Error("The upload reservation expired"), {
+				code: "storage_upload_expired",
+				retryable: false,
+			});
+		if (failNextPut) {
+			failNextPut = false;
+			throw Object.assign(new Error("The signed upload answered 503"), {
+				code: "storage_upload_rejected",
+				retryable: true,
+			});
+		}
+		// The upload is create-only: it never replaces what is stored under a name.
 		if (!objects.has(key)) objects.set(key, Uint8Array.from(bytes));
 	},
 } as unknown as R2Bucket;
@@ -122,12 +144,15 @@ async function finalRow(): Promise<FinalRow> {
 	if (!row) throw new Error("Final document fixture missing");
 	return row;
 }
-async function completeEnvelope(): Promise<{ row: FinalRow; stored: Uint8Array }> {
-	const completion = await request(`/api/signing/${token}/complete`, {
+function postCompletion(): Promise<Response> {
+	return request(`/api/signing/${token}/complete`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ signatureName: "Ada Lovelace", rememberSignature: false }),
 	});
+}
+async function completeEnvelope(): Promise<{ row: FinalRow; stored: Uint8Array }> {
+	const completion = await postCompletion();
 	expect(completion.status).toBe(200);
 	const row = await finalRow();
 	const stored = objects.get(row.r2_key);
@@ -150,7 +175,10 @@ afterAll(async () => {
 	setOmhMailTransport(null);
 	await postgres.close();
 });
+afterEach(() => vi.useRealTimers());
 beforeEach(async () => {
+	reservedAt = new Map();
+	failNextPut = false;
 	await postgres.exec("TRUNCATE envelopes CASCADE");
 	const pdf = await PDFDocument.create();
 	pdf.setCreationDate(new Date(now));
@@ -197,18 +225,24 @@ it("serves an intact current final PDF exactly as stored, without reading the so
 it("regenerates a final PDF that was cut short although it still carries the renderer marker", async () => {
 	const { row, stored } = await completeEnvelope();
 	objects.set(row.r2_key, stored.slice(0, stored.byteLength - 20));
-	// The platform's upload is create-only, so the damaged object keeps its name and every download
-	// has to regenerate the recorded artifact again, always within the ten private calls.
-	for (const attempt of [1, 2]) {
-		const response = await downloadFinalPdf();
-		expect(response.status, `download ${attempt}`).toBe(200);
-		const served = new Uint8Array(await response.arrayBuffer());
-		expect(served.byteLength).toBe(row.byte_size);
-		expect(sha256(served)).toBe(row.sha256);
-		expect((await PDFDocument.load(served, { updateMetadata: false })).getPageCount()).toBe(2);
-		expect(await finalRow()).toEqual(row);
-		expect(count()).toBeLessThanOrEqual(10);
-	}
+	// The platform's upload is create-only, so the repair stores the sound copy under a new name and
+	// the record moves to it, always within the ten private calls. The damaged object stays behind,
+	// retained for deletion.
+	const repaired = await downloadFinalPdf();
+	expect(repaired.status).toBe(200);
+	const served = new Uint8Array(await repaired.arrayBuffer());
+	expect(served.byteLength).toBe(row.byte_size);
+	expect(sha256(served)).toBe(row.sha256);
+	expect((await PDFDocument.load(served, { updateMetadata: false })).getPageCount()).toBe(2);
+	expect(count()).toBeLessThanOrEqual(10);
+	const healed = await finalRow();
+	expect(healed).toEqual({ ...row, r2_key: expect.any(String) });
+	expect(healed.r2_key).not.toBe(row.r2_key);
+	// The next download finds the sound copy and serves it as stored.
+	const next = await downloadFinalPdf();
+	expect(next.status).toBe(200);
+	expect(sha256(new Uint8Array(await next.arrayBuffer()))).toBe(row.sha256);
+	expect(calls.files).toBe(2);
 });
 
 it("regenerates a final PDF whose bytes changed without changing their length", async () => {
@@ -222,7 +256,7 @@ it("regenerates a final PDF whose bytes changed without changing their length", 
 	expect(served.byteLength).toBe(row.byte_size);
 	expect(sha256(served)).toBe(row.sha256);
 	expect((await PDFDocument.load(served, { updateMetadata: false })).getPageCount()).toBe(2);
-	expect(await finalRow()).toEqual(row);
+	expect(await finalRow()).toEqual({ ...row, r2_key: expect.not.stringMatching(row.r2_key) });
 	expect(count()).toBeLessThanOrEqual(10);
 });
 
@@ -252,4 +286,68 @@ it("answers repair pending instead of serving a damaged final PDF when no source
 	});
 	expect(await finalRow()).toEqual(row);
 	expect(count()).toBeLessThanOrEqual(10);
+});
+
+/**
+ * A failed upload leaves a reservation that the platform lets die. A signer or a download link that
+ * is tried again later must still get the contract finished, so every attempt stores under a name of
+ * its own instead of replaying the dead one.
+ */
+describe("a final PDF whose upload failed after its reservation, tried again later", () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-10-23T10:00:00Z"));
+	});
+	const later = (milliseconds: number) => vi.setSystemTime(Date.now() + milliseconds);
+
+	it.each([
+		["100 seconds", 100_000],
+		["241 seconds", 241_000],
+		["an hour", 3_600_000],
+		["a day", 86_400_000],
+	])("finishes a completion that the signer repeats %s later", async (_label, delay) => {
+		failNextPut = true;
+		const failed = await postCompletion();
+		expect(failed.status).toBe(503);
+		expect(await failed.json()).toMatchObject({
+			error: { code: "FINAL_PDF_GENERATION_FAILED", retryable: true },
+		});
+		later(delay);
+		resetCalls();
+		const repeated = await postCompletion();
+		expect(repeated.status).toBe(200);
+		expect(count()).toBeLessThanOrEqual(10);
+		expect((await postgres.query("SELECT status FROM envelopes")).rows).toEqual([
+			{ status: "completed" },
+		]);
+		const row = await finalRow();
+		expect(objects.has(row.r2_key)).toBe(true);
+		expect(sha256(objects.get(row.r2_key) ?? new Uint8Array())).toBe(row.sha256);
+	});
+
+	it.each([
+		["241 seconds", 241_000],
+		["a day", 86_400_000],
+	])("repairs a damaged final PDF on a download repeated %s after the first repair failed", async (_label, delay) => {
+		const { row, stored } = await completeEnvelope();
+		objects.set(row.r2_key, stored.slice(0, stored.byteLength - 20));
+		failNextPut = true;
+		const failed = await downloadFinalPdf();
+		expect(failed.status).toBe(503);
+		expect(await failed.json()).toMatchObject({ error: { code: "FINAL_PDF_REPAIR_PENDING" } });
+		later(delay);
+		const repeated = await downloadFinalPdf();
+		expect(repeated.status).toBe(200);
+		const served = new Uint8Array(await repeated.arrayBuffer());
+		expect(sha256(served)).toBe(row.sha256);
+		expect(count()).toBeLessThanOrEqual(10);
+		// The repair stored a sound copy under a new name and the record points at it, so the next
+		// download is served as stored instead of repairing again.
+		const healed = await finalRow();
+		expect(healed.r2_key).not.toBe(row.r2_key);
+		expect(sha256(objects.get(healed.r2_key) ?? new Uint8Array())).toBe(row.sha256);
+		const next = await downloadFinalPdf();
+		expect(next.status).toBe(200);
+		expect(calls.files).toBe(2);
+	});
 });

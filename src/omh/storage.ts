@@ -103,7 +103,11 @@ export function createOmhDocumentsBucket(env: OmhStorageEnv): R2Bucket {
 					})),
 				);
 				const results = await storage.deleteMany({ objects });
-				const incomplete = results.find((result) => result.state !== "completed");
+				// A name the platform never stored, such as one retained for an upload attempt that
+				// failed before its reservation, is already gone.
+				const incomplete = results
+					.filter((result) => result.state !== "completed")
+					.find((result) => result.state === "pending" || result.code !== "object_not_found");
 				if (incomplete) {
 					throw Object.assign(
 						new Error("Private document deletion has not completed; repeat the same request"),
