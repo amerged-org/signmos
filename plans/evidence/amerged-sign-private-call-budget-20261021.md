@@ -6,7 +6,7 @@ The OMH customer dispatch policy permits ten subrequests per HTTP request and 50
 
 | Flow | Verified private calls | Evidence |
 | --- | --- | --- |
-| Create, upload, prepare and invite one recipient, with 20 fields | Exactly 10: 4 database queries, 2 database transactions, 3 file calls, 1 mail call | `src/omh/contracts-create.test.ts`, real OMH client adapters through the hosted authorization gate, both Bearer and CSRF cookie identities |
+| Create, upload, prepare and invite one recipient, with 20 fields | Exactly 10: 4 database queries, 2 database transactions, 3 file calls, 1 mail call | `src/omh/contracts-create.test.ts`, real OMH client adapters through the hosted authorization gate, both Bearer and CSRF cookie identities; the order is pinned: gate and claim (4 queries), draft transaction, file reserve, signed upload, file complete, mail, then the activation transaction that carries the receipt as the last call |
 | Owner contract catalog or detail | 4 database calls including Bearer authentication | `src/hono/api/contracts.test.ts`; actual projection SQL in `src/omh/contracts-postgres.test.ts` |
 | Browser API-token creation or revocation | 6 normally; at most 10 with bounded slot contention; five active tokens remain the limit | `src/omh/auth-tokens-postgres.test.ts`, actual auth route, cookie/CSRF checks, SQL bridge and audit FKs |
 | Owner final PDF | 5 database calls including Bearer authentication and a fresh authorization/locator check after file read; private file adapter adds 2 | `src/hono/api/contracts.test.ts`, deletion-during-read regression |

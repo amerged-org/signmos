@@ -34,8 +34,13 @@ type Router = { fetch(request: Request, env: Env): Response | Promise<Response> 
  * gateway. Every call that reaches a double is one physical subrequest.
  */
 export interface CreationHarness {
-	/** The calls the request has made so far: database queries and transactions, files and mail. */
-	physicalCalls: number;
+	/**
+	 * What the request has called so far, in order: "database.query", "database.transaction",
+	 * "storage.gateway" (reserve and complete), "storage.upload" (the signed PUT) and "mail.send".
+	 * Each is one physical subrequest.
+	 */
+	calls: string[];
+	readonly physicalCalls: number;
 	queries: CustomerDatabaseQuery[];
 	batches: (readonly CustomerDatabaseQuery[])[];
 	/** The idempotency key of the mail the gateway double received. */
@@ -61,7 +66,10 @@ export interface CreationHarness {
 export function useCreationHarness(): CreationHarness {
 	let csrfToken = "";
 	const harness: CreationHarness = {
-		physicalCalls: 0,
+		calls: [],
+		get physicalCalls() {
+			return harness.calls.length;
+		},
 		queries: [],
 		batches: [],
 		deliveredKey: null,
@@ -118,7 +126,7 @@ export function useCreationHarness(): CreationHarness {
 	};
 
 	beforeEach(async () => {
-		harness.physicalCalls = 0;
+		harness.calls = [];
 		harness.queries = [];
 		harness.batches = [];
 		harness.storagePending = false;
@@ -155,7 +163,7 @@ export function useCreationHarness(): CreationHarness {
 				: tokenRow;
 		const database: CustomerDatabaseBinding = {
 			query: async (value) => {
-				harness.physicalCalls++;
+				harness.calls.push("database.query");
 				const query = value as CustomerDatabaseQuery;
 				harness.queries.push(query);
 				const failed = failedAnswer(query);
@@ -181,7 +189,7 @@ export function useCreationHarness(): CreationHarness {
 				throw new Error("Unexpected private database read during contract creation");
 			},
 			transaction: async (value) => {
-				harness.physicalCalls++;
+				harness.calls.push("database.transaction");
 				const batch = value as readonly CustomerDatabaseQuery[];
 				harness.batches.push(batch);
 				// An infrastructure failure, for example a call limit: the runtime client reports it as
@@ -196,7 +204,7 @@ export function useCreationHarness(): CreationHarness {
 		const storageEnv: OmhStorageEnv = {
 			OHMYHOST_STORAGE_GATEWAY: {
 				fetch: async (request) => {
-					harness.physicalCalls++;
+					harness.calls.push("storage.gateway");
 					if (harness.storageDown) throw new Error("Too many subrequests");
 					const path = new URL(request.url).pathname;
 					if (path === "/v1/uploads/complete")
@@ -225,12 +233,12 @@ export function useCreationHarness(): CreationHarness {
 			OHMYHOST_ENVIRONMENT_ID: transferId,
 		};
 		vi.stubGlobal("fetch", async (request: Request) => {
-			harness.physicalCalls++;
+			harness.calls.push("storage.upload");
 			expect(request.method).toBe("PUT");
 			return new Response(null, { status: 200 });
 		});
 		setOmhMailTransport(async (request: Request) => {
-			harness.physicalCalls++;
+			harness.calls.push("mail.send");
 			expect(harness.batches).toHaveLength(1);
 			expect(
 				harness.batches[0]?.some(

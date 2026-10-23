@@ -4,21 +4,25 @@ import { apiHono } from "@/hono/api";
 import { useCreationHarness } from "./contracts-create-harness";
 import { ContractError } from "./contracts-schema";
 
+/** The most fields a contract takes: one signature and nineteen dates. */
+const maximumFields = () =>
+	Array.from({ length: 20 }, (_, index) => ({
+		type: index === 0 ? ("signature" as const) : ("date" as const),
+		page: 1,
+		x: 72,
+		y: 200,
+		width: 180,
+		height: 32,
+	}));
+
 describe("bounded contract creation through private OMH adapters", () => {
 	const creation = useCreationHarness();
 
 	it("sends a maximum-field contract within ten physical subrequests including authentication, files, mail and receipt", async () => {
-		creation.input.fields = Array.from({ length: 20 }, (_, index) => ({
-			type: index === 0 ? "signature" : "date",
-			page: 1,
-			x: 72,
-			y: 200,
-			width: 180,
-			height: 32,
-		}));
+		creation.input.fields = maximumFields();
 		for (const mode of ["bearer", "browser"] as const) {
 			creation.browser = mode === "browser";
-			creation.physicalCalls = 0;
+			creation.calls = [];
 			creation.queries = [];
 			creation.batches = [];
 			const response = await creation.create();
@@ -53,12 +57,48 @@ describe("bounded contract creation through private OMH adapters", () => {
 		}
 	});
 
+	/**
+	 * The platform allows ten subrequests per request, and nothing may follow the receipt: a failed
+	 * activation needs an eleventh call to be recorded (see below), a successful one needs none.
+	 * Measured with the doubles of this harness, for the session and for the Bearer token alike.
+	 */
+	it.each([
+		"bearer",
+		"browser",
+	] as const)("makes exactly ten private calls in a fixed order, with the receipt in the last one (%s)", async (mode) => {
+		creation.browser = mode === "browser";
+		creation.input.fields = maximumFields();
+		const response = await creation.create();
+		expect(response.status).toBe(201);
+		expect(creation.calls).toEqual([
+			// The hosted gate (session, or token) and the claim of the Idempotency-Key.
+			"database.query",
+			"database.query",
+			"database.query",
+			"database.query",
+			// The draft, saved before anything leaves the Worker.
+			"database.transaction",
+			// The PDF: reserve the upload, send the signed upload, complete it.
+			"storage.gateway",
+			"storage.upload",
+			"storage.gateway",
+			// The invitation, sent only once the draft and its PDF are stored.
+			"mail.send",
+			// The activation of the signing link and the receipt, in one transaction.
+			"database.transaction",
+		]);
+		const receipt = creation.batches[1]?.find((query) =>
+			query.text.startsWith('update "agentic_command_records"'),
+		);
+		expect(receipt?.values).toContain(JSON.stringify(await response.json()));
+	});
+
 	it("leaves the durable draft inactive when upload or mail confirmation is uncertain", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
 		for (const failure of ["storage", "mail"] as const) {
 			creation.batches = [];
 			creation.queries = [];
-			creation.physicalCalls = 0;
+			creation.calls = [];
 			creation.deliveredKey = null;
 			creation.storagePending = failure === "storage";
 			creation.mailUncertain = failure === "mail";
