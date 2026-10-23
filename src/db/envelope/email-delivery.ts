@@ -13,6 +13,8 @@ export interface EmailDeliveryOptions {
 	env?: EmailDeliveryEnv;
 	baseUrl: string;
 	fetcher?: typeof fetch;
+	/** Gateway deadline in milliseconds for one managed-mail send; the mail default when absent. */
+	timeoutMilliseconds?: number;
 }
 
 interface TransactionalEmail {
@@ -86,7 +88,8 @@ export async function deliverTransactionalEmail(
 	email: TransactionalEmail,
 	options: EmailDeliveryOptions,
 ): Promise<{ providerMessage: string | null }> {
-	if (options.env?.OHMYHOST_PROJECT_ID) return sendOmhMail(options.env, email);
+	if (options.env?.OHMYHOST_PROJECT_ID)
+		return sendOmhMail(options.env, email, { timeoutMilliseconds: options.timeoutMilliseconds });
 	const config = getResendConfig(options.env);
 	if (!config) return { providerMessage: null };
 

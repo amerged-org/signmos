@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import { OWNER_NOTICE_TIMEOUT_MILLISECONDS } from "@/omh/mail";
 import {
 	buildSenderPartnerSignedEmail,
 	deliverTransactionalEmail,
@@ -174,12 +175,13 @@ export async function completeSigning(
 		: "sent";
 	if (shouldNotifySender)
 		writes.push(
+			// States only that the notice was requested with the signature, see notifySenderSigned.
 			db.insert(emailSendRecords).values({
 				envelopeId: token.envelopeId,
 				recipientId: token.recipientId,
 				tokenId: token.id,
 				email: parsedEnvelope.createdBy,
-				kind: "partner_signed",
+				kind: "partner_signed_notice_requested",
 				fallbackUrl: senderNotificationUrl,
 			}),
 		);
@@ -207,10 +209,18 @@ export async function completeSigning(
 /**
  * Tell the owner that a signer signed, after the signature is durable. A mail refusal (daily
  * send limit, suspended sender, unpaid workspace, timeout) must not undo, block or repeat the
- * signing, so it is swallowed. The failure is not recorded: the flow already uses all ten private
- * calls a Worker may make, so a recording insert would be the eleventh. The message is a pure
- * function of the owner, the signer and the status link, so its content-derived idempotency key
- * makes a repeated call a gateway replay instead of a second mail.
+ * signing, so it is swallowed. The signer's answer waits for this courtesy mail, so the send gives
+ * up after OWNER_NOTICE_TIMEOUT_MILLISECONDS instead of the longer default deadline of mails such
+ * as login and invitation.
+ *
+ * Its outcome is not recorded either: the flow already uses all ten private calls a Worker may
+ * make, so recording it would take an eleventh. The `partner_signed_notice_requested` row was
+ * therefore written in the signature transaction, before this send, and states only that the
+ * notice was requested together with the signature; delivery is unknown. Only the mail gateway's
+ * ledger and the owner's mailbox show what became of the mail.
+ *
+ * The message is a pure function of the owner, the signer and the status link, so its
+ * content-derived idempotency key makes a repeated call a gateway replay instead of a second mail.
  */
 async function notifySenderSigned(
 	token: SignerToken,
@@ -230,7 +240,7 @@ async function notifySenderSigned(
 					delivery,
 				),
 			}),
-			delivery,
+			{ ...delivery, timeoutMilliseconds: OWNER_NOTICE_TIMEOUT_MILLISECONDS },
 		);
 	} catch {
 		// Best effort: the owner sees the completed contract in the console either way.

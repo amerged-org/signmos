@@ -274,7 +274,7 @@ describe("PDF finalization", () => {
 		expect(state.emailSendRecords).toEqual([
 			expect.objectContaining({
 				email: "sender@example.com",
-				kind: "partner_signed",
+				kind: "partner_signed_notice_requested",
 				fallbackUrl: "/envelope-fields?envelopeId=00000000-0000-4000-8000-000000000001",
 			}),
 		]);
@@ -341,7 +341,7 @@ describe("PDF finalization", () => {
 		expect(state.emailSendRecords).toEqual([
 			expect.objectContaining({
 				email: "sender@example.com",
-				kind: "partner_signed",
+				kind: "partner_signed_notice_requested",
 				fallbackUrl: "/envelope-fields?envelopeId=00000000-0000-4000-8000-000000000001",
 			}),
 			expect.objectContaining({

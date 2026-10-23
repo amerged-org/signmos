@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deliverTransactionalEmail, isResendConfigured } from "@/db/envelope/email-delivery";
-import { hasOmhMail, type OmhMailEnv, sendOmhMail, setOmhMailTransport } from "./mail";
+import {
+	hasOmhMail,
+	type OmhMailEnv,
+	OWNER_NOTICE_TIMEOUT_MILLISECONDS,
+	sendOmhMail,
+	setOmhMailTransport,
+} from "./mail";
 
 const message = {
 	to: "signer@example.test",
@@ -146,6 +152,56 @@ describe("managed OMH transactional mail", () => {
 			await arrived;
 			await vi.advanceTimersByTimeAsync(12_000);
 			await expect(sent).resolves.toEqual({ providerMessage: "slow-1" });
+		});
+
+		it("keeps the longer deadline for a mail that sets none of its own, such as login and invitation", async () => {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			const { env, fetcher } = managedMail();
+			const arrived = slowGateway(fetcher, 12_000);
+			const sent = deliverTransactionalEmail(message, {
+				baseUrl: "https://sign.example.test",
+				env,
+			});
+			await arrived;
+			await vi.advanceTimersByTimeAsync(12_000);
+			await expect(sent).resolves.toEqual({ providerMessage: "slow-1" });
+		});
+
+		/**
+		 * The platform records sends of 5-10 s and 5-13 s (its PLAN.md, the comment in its
+		 * apps/mail-gateway/src/resend-send.ts and its W26 specification, row L21). A deadline inside
+		 * that range would abandon the slowest notices on this side.
+		 */
+		it("lets an owner notice take as long as the longest send the platform has recorded", async () => {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			const { env, fetcher } = managedMail();
+			const arrived = slowGateway(fetcher, 13_000);
+			const sent = deliverTransactionalEmail(message, {
+				baseUrl: "https://sign.example.test",
+				env,
+				timeoutMilliseconds: OWNER_NOTICE_TIMEOUT_MILLISECONDS,
+			});
+			await arrived;
+			await vi.advanceTimersByTimeAsync(13_000);
+			await expect(sent).resolves.toEqual({ providerMessage: "slow-1" });
+		});
+
+		it("gives up on an owner notice after its own shorter deadline", async () => {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			const { env, fetcher } = managedMail();
+			const arrived = slowGateway(fetcher, 60_000);
+			const sent = deliverTransactionalEmail(message, {
+				baseUrl: "https://sign.example.test",
+				env,
+				timeoutMilliseconds: OWNER_NOTICE_TIMEOUT_MILLISECONDS,
+			});
+			const failure = expect(sent).rejects.toMatchObject({
+				code: "gateway_timeout",
+				retryable: true,
+			});
+			await arrived;
+			await vi.advanceTimersByTimeAsync(OWNER_NOTICE_TIMEOUT_MILLISECONDS);
+			await failure;
 		});
 
 		it("still gives up with a retryable timeout after 25 seconds", async () => {

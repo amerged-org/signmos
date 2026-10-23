@@ -578,7 +578,7 @@ describe("signing flow API", () => {
 				recipientId: "20000000-0000-4000-8000-000000000001",
 				tokenId: "30000000-0000-4000-8000-000000000001",
 				email: "sender@example.com",
-				kind: "partner_signed",
+				kind: "partner_signed_notice_requested",
 				fallbackUrl: "/envelope-fields?envelopeId=00000000-0000-4000-8000-000000000001",
 			}),
 		]);
@@ -874,7 +874,7 @@ describe("signing flow API", () => {
 					recipientId: "20000000-0000-4000-8000-000000000002",
 					tokenId: "30000000-0000-4000-8000-000000000002",
 					email: "sender@example.com",
-					kind: "partner_signed",
+					kind: "partner_signed_notice_requested",
 					fallbackUrl: "/envelope-fields?envelopeId=00000000-0000-4000-8000-000000000001",
 				}),
 				expect.objectContaining({

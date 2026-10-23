@@ -216,7 +216,9 @@ describe("agent partner completion", () => {
 		expect(replay.status).toBe(200);
 		await expect(replay.json()).resolves.toEqual(completedBody);
 		expect(rows(fieldValues).filter((row) => row.recipientId === partnerId)).toHaveLength(2);
-		expect(rows(emailSendRecords).filter((row) => row.kind === "partner_signed")).toHaveLength(1);
+		expect(
+			rows(emailSendRecords).filter((row) => row.kind === "partner_signed_notice_requested"),
+		).toHaveLength(1);
 		expect(rows(auditEvents).filter((row) => row.eventType === "recipient.completed")).toHaveLength(
 			1,
 		);

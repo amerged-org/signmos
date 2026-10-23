@@ -9,11 +9,32 @@ export interface OmhMailEnv {
 }
 
 /**
- * The gateway answers only after several Control database transactions and the provider call; the
- * platform has observed 5-13 s sends. The client's 10 s default would abort a send that still
- * completes, which turns an accepted mail into a 503 and a second send. 30 s is the client maximum.
+ * How long a mail without a deadline of its own, such as a login or invitation mail, waits for the
+ * gateway; the runtime client's own default is 10 s and its maximum 30 s. The gateway answers only
+ * after several database transactions and the provider call, and bounds its steps separately (5 s
+ * to connect, 10 s per database query and 15 s for the provider call; platform repository,
+ * apps/mail-gateway and packages/provider-resend). The platform has recorded sends of 5-10 s
+ * (docs/plan/history/PLAN.md: "accepted sends take 5-10 s ... and can exceed the customer client's
+ * 10 s timeout"; the comment "the 5-10 s Dev sends" in apps/mail-gateway/src/resend-send.ts) and of
+ * 5-13 s (docs/plan/specs/2026-10-22-gateway-egress-forward.md, row L21). The client would abort a
+ * send that still completes after 10 s, which turns an accepted mail into a 503 and a second send.
+ * 25 s lies above the longest recorded send and below the client's maximum. It is a choice, not a
+ * measurement: the platform plans one (its V18, the basis for published timeout guidance), and so
+ * does the hosted acceptance of this app (runbook 8.3).
  */
 const MAIL_GATEWAY_TIMEOUT_MILLISECONDS = 25_000;
+
+/**
+ * How long the owner notice after a signature waits for the gateway. The signer's answer waits for
+ * this courtesy mail, so it gives up sooner than a login or invitation mail, but not inside the
+ * 5-13 s the platform has recorded for sends (see above): a deadline there would abandon the
+ * slowest notices on this side while the signer waits just as long. 15 s lies above the longest
+ * recorded send. It is a choice, not a measurement; replace it with the platform's own figure or
+ * with timed sends on the hosted platform. A notice abandoned at this deadline may still be sent by
+ * the gateway; its content-derived idempotency key makes any later retry a gateway replay instead
+ * of a second mail.
+ */
+export const OWNER_NOTICE_TIMEOUT_MILLISECONDS = 15_000;
 
 type MailTransport = (request: Request) => Promise<Response>;
 
@@ -49,9 +70,14 @@ export function hasOmhMail(env: OmhMailEnv | undefined): boolean {
 	);
 }
 
+/**
+ * Sends one mail through the platform's mail gateway. `timeoutMilliseconds` replaces the default
+ * gateway deadline for this send only; the runtime client accepts 100 to 30,000.
+ */
 export async function sendOmhMail(
 	env: OmhMailEnv,
 	mail: { to: string; subject: string; text: string; html: string },
+	options: { timeoutMilliseconds?: number } = {},
 ): Promise<{ providerMessage: string }> {
 	if (
 		!hasOmhMail(env) ||
@@ -79,7 +105,7 @@ export async function sendOmhMail(
 		key: env.OHMYHOST_MAIL_KEY,
 		projectId: env.OHMYHOST_PROJECT_ID,
 		fetch: (request) => transport(request),
-		timeoutMilliseconds: MAIL_GATEWAY_TIMEOUT_MILLISECONDS,
+		timeoutMilliseconds: options.timeoutMilliseconds ?? MAIL_GATEWAY_TIMEOUT_MILLISECONDS,
 	});
 	const result = await client.send({
 		...mail,

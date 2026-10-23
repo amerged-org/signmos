@@ -7,7 +7,7 @@ import type {
 import { PDFDocument } from "pdf-lib";
 import { withDatabase } from "@/db/setup";
 import { apiHono } from "@/hono/api";
-import { setOmhMailTransport } from "@/omh/mail";
+import { OWNER_NOTICE_TIMEOUT_MILLISECONDS, setOmhMailTransport } from "@/omh/mail";
 import { controlEnvelope } from "./controls";
 import { resolveSignerToken } from "./signing";
 
@@ -501,6 +501,12 @@ it.each(
 	expect(
 		(await postgres.query("SELECT count(*)::integer AS count FROM final_documents")).rows,
 	).toEqual([{ count: 1 }]);
+	// The row is written with the signature, before the send is attempted and whatever its outcome,
+	// so it may only claim that the notice was requested, never that it arrived.
+	expect(
+		(await postgres.query("SELECT kind FROM email_send_records WHERE email = 'owner@example.com'"))
+			.rows,
+	).toEqual([{ kind: "partner_signed_notice_requested" }]);
 });
 
 it("tells the owner only after the signature and the final PDF are stored", async () => {
@@ -547,4 +553,20 @@ it("notifies the owner once the retried completion finishes the PDF, never befor
 	expect((await complete()).status).toBe(200);
 	expect(calls.mail).toBe(1);
 	expect(count()).toBeLessThanOrEqual(10);
+});
+
+it("gives the owner notice its own short deadline, never the 25 seconds of login and invitation", async () => {
+	// The signer's answer waits for the notice. A calling-through spy reads the deadlines the request
+	// arms; fake timers would stall pdf-lib, whose parser yields through setTimeout on larger files.
+	const timers = vi.spyOn(globalThis, "setTimeout");
+	let armed: unknown[] = [];
+	try {
+		expect((await complete()).status).toBe(200);
+		armed = timers.mock.calls.map((call) => call[1]);
+	} finally {
+		timers.mockRestore();
+	}
+	expect(calls.mail).toBe(1);
+	expect(armed).toContain(OWNER_NOTICE_TIMEOUT_MILLISECONDS);
+	expect(armed).not.toContain(25_000);
 });
