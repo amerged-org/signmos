@@ -25,7 +25,6 @@ function stubWorkersRequestConstructor() {
 }
 
 const env: OmhStorageEnv = {
-	OHMYHOST_STORAGE_GATEWAY: { fetch: vi.fn() },
 	OHMYHOST_STORAGE_GATEWAY_URL: "https://private-storage.invalid",
 	OHMYHOST_STORAGE_KEY: "private-key",
 	OHMYHOST_PROJECT_ID: "project",
@@ -85,6 +84,31 @@ describe("OMH private document storage", () => {
 				environmentId: env.OHMYHOST_ENVIRONMENT_ID,
 			}),
 		);
+	});
+
+	/**
+	 * The platform's egress-policy Worker forwards a global fetch to the storage gateway privately.
+	 * The service binding OHMYHOST_STORAGE_GATEWAY answers 503 while that policy is attached
+	 * (platform topic W26), so the adapter takes no binding and calls the global fetch, like mail.
+	 */
+	it("hands the runtime client the global fetch for the gateway and for the signed upload, resolved at each call", async () => {
+		createOmhDocumentsBucket(env);
+		const options = boundary.createClient.mock.calls[0]?.[0] as {
+			fetch: (request: Request) => Promise<Response>;
+			capabilityFetch: (request: Request) => Promise<Response>;
+		};
+		// Stubbed after the bucket exists: a reference to the global stored earlier would miss it.
+		const globalFetch = vi.fn(async (_request: Request) => new Response(null, { status: 204 }));
+		vi.stubGlobal("fetch", globalFetch);
+		const gatewayRequest = new Request("https://private-storage.invalid/v1/uploads", {
+			method: "POST",
+		});
+		const uploadRequest = new Request("https://signed-storage.invalid/upload", { method: "PUT" });
+		await options.fetch(gatewayRequest);
+		await options.capabilityFetch(uploadRequest);
+		expect(globalFetch).toHaveBeenCalledTimes(2);
+		expect(globalFetch.mock.calls[0]?.[0]).toBe(gatewayRequest);
+		expect(globalFetch.mock.calls[1]?.[0]).toBe(uploadRequest);
 	});
 
 	it("refuses a redirecting signed URL instead of following it", async () => {

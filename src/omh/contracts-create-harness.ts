@@ -202,37 +202,40 @@ export function useCreationHarness(): CreationHarness {
 			},
 		};
 		const storageEnv: OmhStorageEnv = {
-			OHMYHOST_STORAGE_GATEWAY: {
-				fetch: async (request) => {
-					harness.calls.push("storage.gateway");
-					if (harness.storageDown) throw new Error("Too many subrequests");
-					const path = new URL(request.url).pathname;
-					if (path === "/v1/uploads/complete")
-						return Response.json({
-							state: harness.storagePending ? "pending" : "completed",
-							transfer_id: transferId,
-						});
-					const body = (await request.json()) as { objectKey: string; contentLength: number };
-					return Response.json({
-						state: "ready",
-						transfer_id: transferId,
-						capability: {
-							operation: "PUT",
-							objectKey: body.objectKey,
-							url: "https://upload.example.com/contract",
-							expiresAt: new Date(Date.now() + 60_000).toISOString(),
-							expectedContentLength: body.contentLength,
-							requiredHeaders: { "content-type": "application/pdf" },
-						},
-					});
-				},
-			},
 			OHMYHOST_STORAGE_GATEWAY_URL: "https://private-storage.example.com",
 			OHMYHOST_STORAGE_KEY: "s".repeat(43),
 			OHMYHOST_PROJECT_ID: projectId,
 			OHMYHOST_ENVIRONMENT_ID: transferId,
 		};
+		const gatewayOrigin = new URL(storageEnv.OHMYHOST_STORAGE_GATEWAY_URL).origin;
+		const storageGateway = async (request: Request): Promise<Response> => {
+			if (harness.storageDown) throw new Error("Too many subrequests");
+			if (new URL(request.url).pathname === "/v1/uploads/complete")
+				return Response.json({
+					state: harness.storagePending ? "pending" : "completed",
+					transfer_id: transferId,
+				});
+			const body = (await request.json()) as { objectKey: string; contentLength: number };
+			return Response.json({
+				state: "ready",
+				transfer_id: transferId,
+				capability: {
+					operation: "PUT",
+					objectKey: body.objectKey,
+					url: "https://upload.example.com/contract",
+					expiresAt: new Date(Date.now() + 60_000).toISOString(),
+					expectedContentLength: body.contentLength,
+					requiredHeaders: { "content-type": "application/pdf" },
+				},
+			});
+		};
+		// Storage and its signed uploads use the global fetch: the gateway's origin is the file
+		// gateway, any other origin the signed upload URL. Every request is one physical call.
 		vi.stubGlobal("fetch", async (request: Request) => {
+			if (new URL(request.url).origin === gatewayOrigin) {
+				harness.calls.push("storage.gateway");
+				return storageGateway(request);
+			}
 			harness.calls.push("storage.upload");
 			expect(request.method).toBe("PUT");
 			return new Response(null, { status: 200 });

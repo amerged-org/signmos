@@ -1,21 +1,30 @@
 import { createPrivateStorageClient } from "@ohmyhost/customer-runtime/storage";
 
 export interface OmhStorageEnv {
-	OHMYHOST_STORAGE_GATEWAY: { fetch(request: Request): Promise<Response> };
 	OHMYHOST_STORAGE_GATEWAY_URL: string;
 	OHMYHOST_STORAGE_KEY: string;
 	OHMYHOST_PROJECT_ID: string;
 	OHMYHOST_ENVIRONMENT_ID: string;
 }
 
-/** The existing document domain uses only these R2-compatible operations. */
+/**
+ * The existing document domain uses only these R2-compatible operations.
+ *
+ * Both the gateway requests and the signed uploads use the global fetch, called as `fetch(request)`
+ * at the moment of use: never store a detached reference to it, the Workers runtime binds the call.
+ * The platform's design (topic W26) has its egress-policy Worker forward a request to
+ * OHMYHOST_STORAGE_GATEWAY_URL privately, as it already does for mail (`src/omh/mail.ts`), while
+ * the private service binding OHMYHOST_STORAGE_GATEWAY answers 503 as long as that policy is
+ * attached. Until the platform releases that forwarding on an environment, storage does not work
+ * there with either transport.
+ */
 export function createOmhDocumentsBucket(env: OmhStorageEnv): R2Bucket {
 	const storage = createPrivateStorageClient({
 		endpoint: env.OHMYHOST_STORAGE_GATEWAY_URL,
 		key: env.OHMYHOST_STORAGE_KEY,
 		projectId: env.OHMYHOST_PROJECT_ID,
 		environmentId: env.OHMYHOST_ENVIRONMENT_ID,
-		fetch: (request) => env.OHMYHOST_STORAGE_GATEWAY.fetch(request),
+		fetch: (request) => fetch(request),
 		capabilityFetch: (request) => fetch(request),
 	});
 
