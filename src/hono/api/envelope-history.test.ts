@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	auditEvents,
 	envelopeFields,
@@ -8,6 +9,7 @@ import {
 	senderVerificationTokens,
 	signerTokens,
 } from "@/db/envelope";
+import { FINAL_PDF_RENDERER_PRODUCER } from "@/db/envelope/final-pdf-renderer";
 import { apiHono } from "@/hono/api";
 
 const currentEnvelopeId = "00000000-0000-4000-8000-000000000001";
@@ -201,13 +203,16 @@ describe("confirmed email document history API", () => {
 			),
 			signerToken(sentEnvelopeId, "20000000-0000-4000-8000-000000000003", "sent-signer-token"),
 		];
-		const finalPdf = new TextEncoder().encode("%PDF-1.4\nhistory completed artifact\n%%EOF");
+		// An intact copy: the recorded size and hash match and the renderer marker is current.
+		const finalPdf = new TextEncoder().encode(
+			`%PDF-1.4\nhistory completed artifact\n/Producer (${FINAL_PDF_RENDERER_PRODUCER})\n%%EOF`,
+		);
 		state.finalDocuments = [
 			{
 				id: finalDocumentId,
 				envelopeId: completedEnvelopeId,
 				r2Key: finalR2Key,
-				sha256: "b".repeat(64),
+				sha256: createHash("sha256").update(finalPdf).digest("hex"),
 				byteSize: finalPdf.byteLength,
 				contentType: "application/pdf",
 				createdAt: new Date("2026-05-16T10:00:00.000Z"),

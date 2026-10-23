@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { inflateSync } from "node:zlib";
 import { PDFDocument } from "pdf-lib";
 import {
 	buildCertificateMaterial,
 	isCurrentFinalPdfArtifact,
+	isIntactCurrentFinalPdf,
 	renderFinalPdf,
 } from "./final-pdf-renderer";
 import type { SourceDocument } from "./schema";
@@ -257,6 +259,84 @@ describe("renderFinalPdf", () => {
 		);
 	});
 });
+
+describe("isIntactCurrentFinalPdf", () => {
+	// The download serves the stored bytes as the legal artifact. The producer-marker search alone
+	// cannot tell a cut-short or damaged copy from the original, so the recorded size and SHA-256
+	// of the final_documents row decide, and the marker still decides which renderer wrote it.
+	it("accepts the stored bytes when size and hash are the recorded ones, without parsing the PDF", async () => {
+		const current = await currentFinalPdfBytes();
+		const recorded = recordedArtifact(current);
+		const parse = vi.spyOn(PDFDocument, "load");
+		try {
+			await expect(isIntactCurrentFinalPdf(current, recorded)).resolves.toBe(true);
+			// A view into a larger buffer, as a streamed response body would be: only the view counts.
+			const padded = new Uint8Array(current.byteLength + 7);
+			padded.set(current, 3);
+			await expect(
+				isIntactCurrentFinalPdf(padded.subarray(3, 3 + current.byteLength), recorded),
+			).resolves.toBe(true);
+			expect(parse).not.toHaveBeenCalled();
+		} finally {
+			parse.mockRestore();
+		}
+	});
+
+	it("rejects bytes whose length or SHA-256 differs from the recorded ones", async () => {
+		const current = await currentFinalPdfBytes();
+		const recorded = recordedArtifact(current);
+		await expect(
+			isIntactCurrentFinalPdf(current, { ...recorded, byteSize: recorded.byteSize + 1 }),
+		).resolves.toBe(false);
+		await expect(
+			isIntactCurrentFinalPdf(current, { ...recorded, byteSize: recorded.byteSize - 1 }),
+		).resolves.toBe(false);
+		await expect(
+			isIntactCurrentFinalPdf(current, { ...recorded, sha256: "b".repeat(64) }),
+		).resolves.toBe(false);
+	});
+
+	it("rejects a truncated copy although it still carries the current producer marker", async () => {
+		const current = await currentFinalPdfBytes();
+		const truncated = current.slice(0, current.byteLength - 20);
+		// The marker search alone is blind to the damage; the recorded size and hash are not.
+		await expect(isCurrentFinalPdfArtifact(truncated)).resolves.toBe(true);
+		await expect(isIntactCurrentFinalPdf(truncated, recordedArtifact(current))).resolves.toBe(
+			false,
+		);
+	});
+
+	it("rejects a same-length copy with one changed byte", async () => {
+		const current = await currentFinalPdfBytes();
+		const altered = Uint8Array.from(current);
+		altered[Math.floor(altered.byteLength / 2)] ^= 0xff;
+		await expect(isCurrentFinalPdfArtifact(altered)).resolves.toBe(true);
+		expect(altered.byteLength).toBe(current.byteLength);
+		await expect(isIntactCurrentFinalPdf(altered, recordedArtifact(current))).resolves.toBe(false);
+	});
+
+	it("rejects an intact artifact of an older renderer", async () => {
+		const legacyPdf = await PDFDocument.load(await currentFinalPdfBytes());
+		legacyPdf.setProducer("amerged-sign-final-pdf-renderer/3");
+		const legacy = await legacyPdf.save({ useObjectStreams: false });
+		// Its own size and hash match, so only the renderer version can reject it.
+		await expect(isIntactCurrentFinalPdf(legacy, recordedArtifact(legacy))).resolves.toBe(false);
+	});
+});
+
+function recordedArtifact(bytes: Uint8Array): { byteSize: number; sha256: string } {
+	return { byteSize: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") };
+}
+
+async function currentFinalPdfBytes(): Promise<Uint8Array> {
+	return renderFinalPdf({
+		envelopeId: "00000000-0000-4000-8000-000000000001",
+		sourceDocument: await sourceDocumentFixture(),
+		sourceBytes: await sourcePdfBytes(),
+		certificateHash: "b".repeat(64),
+		rows: { fields: [], values: [], events: [] },
+	});
+}
 
 async function sourceDocumentFixture(): Promise<SourceDocument> {
 	const bytes = await sourcePdfBytes();

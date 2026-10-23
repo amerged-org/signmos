@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	auditEvents,
 	envelopeFields,
@@ -7,6 +8,7 @@ import {
 	finalDocuments,
 	signerTokens,
 } from "@/db/envelope";
+import { FINAL_PDF_RENDERER_PRODUCER } from "@/db/envelope/final-pdf-renderer";
 import { historySecurityEventTypes } from "@/db/history-access/security-audit";
 import { apiHono } from "@/hono/api";
 
@@ -195,13 +197,16 @@ describe("completed document access", () => {
 				createdAt: new Date("2026-05-30T00:00:00.000Z"),
 			},
 		];
-		const finalPdf = new TextEncoder().encode("%PDF-1.4\ncompleted artifact\n%%EOF");
+		// An intact copy: the recorded size and hash match and the renderer marker is current.
+		const finalPdf = new TextEncoder().encode(
+			`%PDF-1.4\ncompleted artifact\n/Producer (${FINAL_PDF_RENDERER_PRODUCER})\n%%EOF`,
+		);
 		state.finalDocuments = [
 			{
 				id: finalDocumentToken,
 				envelopeId,
 				r2Key: finalR2Key,
-				sha256: "b".repeat(64),
+				sha256: createHash("sha256").update(finalPdf).digest("hex"),
 				byteSize: finalPdf.byteLength,
 				contentType: "application/pdf",
 				createdAt: new Date("2026-05-21T09:11:00.000Z"),

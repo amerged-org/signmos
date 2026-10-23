@@ -63,13 +63,39 @@ const CURRENT_PRODUCER_MARKERS = [
 ];
 
 /**
- * Whether the stored final PDF was written by the current renderer. Every public download asks,
- * and a full pdf-lib parse only to read one string costs CPU in proportion to the object count
- * (about 60 ms at 2,000 objects, against a Worker's 50 ms): search the bytes natively instead.
+ * Whether the stored final PDF was written by the current renderer. A full pdf-lib parse only to
+ * read one string costs CPU in proportion to the object count (about 60 ms at 2,000 objects,
+ * against a Worker's 50 ms): search the bytes natively instead. The search is blind to a copy
+ * that was cut short or damaged elsewhere; the process-link download therefore asks
+ * isIntactCurrentFinalPdf, which compares the recorded size and hash first.
  */
 export function isCurrentFinalPdfArtifact(bytes: Uint8Array): Promise<boolean> {
 	const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	return Promise.resolve(CURRENT_PRODUCER_MARKERS.some((marker) => buffer.includes(marker)));
+}
+
+/**
+ * Whether the stored bytes are exactly the final PDF that its final_documents row recorded and
+ * were written by the current renderer; the download regenerates the artifact when this is false.
+ * The size comparison is free, the SHA-256 is a native digest (about 2 ms of CPU for 2 MiB,
+ * including the copy, in a Node run on a laptop on 2026-10-22: a model number, not a Worker
+ * measurement), and nothing parses the PDF.
+ */
+export async function isIntactCurrentFinalPdf(
+	bytes: Uint8Array,
+	recorded: { byteSize: number; sha256: string },
+): Promise<boolean> {
+	if (bytes.byteLength !== recorded.byteSize) return false;
+	if ((await sha256Hex(bytes)) !== recorded.sha256) return false;
+	return isCurrentFinalPdfArtifact(bytes);
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+	// An exactly sized copy: a view into a larger buffer must hash only its own bytes.
+	const exact = new ArrayBuffer(bytes.byteLength);
+	new Uint8Array(exact).set(bytes);
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", exact));
+	return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export function buildCertificateMaterial(

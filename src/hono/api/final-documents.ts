@@ -3,7 +3,7 @@ import {
 	getFinalDocumentDownloadContext,
 	regenerateFinalDocumentArtifact,
 } from "@/db/envelope";
-import { isCurrentFinalPdfArtifact } from "@/db/envelope/final-pdf-renderer";
+import { isIntactCurrentFinalPdf } from "@/db/envelope/final-pdf-renderer";
 import { createHono } from "@/hono/factory";
 
 const finalDocumentsEndpoint = createHono();
@@ -40,9 +40,12 @@ finalDocumentsEndpoint.get("/:token/pdf", async (c) => {
 	}
 
 	const bytes = new Uint8Array(await object.arrayBuffer());
-	const isCurrent = await isCurrentFinalPdfArtifact(bytes);
+	// The recorded size and hash catch a copy that was cut short or damaged; the renderer marker
+	// catches an older renderer. Either way the artifact is regenerated from the signed record, and
+	// a copy that cannot be regenerated, for example without its source record, is never served.
+	const isIntact = await isIntactCurrentFinalPdf(bytes, document);
 	let repaired: Awaited<ReturnType<typeof regenerateFinalDocumentArtifact>> = null;
-	if (!isCurrent && context.snapshot.sourceDocument) {
+	if (!isIntact) {
 		try {
 			repaired = await regenerateFinalDocumentArtifact(document, {
 				documentsBucket: bucket,
