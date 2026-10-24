@@ -45,7 +45,14 @@ The optional `fields` array places fields on the original document instead of ap
 ```json
 {
   "fields": [
-    { "type": "signature", "page": 2, "x": 72, "y": 620, "width": 280, "height": 70 },
+    {
+      "type": "signature",
+      "page": 2,
+      "x": 72,
+      "y": 620,
+      "width": 280,
+      "height": 70
+    },
     { "type": "date", "page": 2, "x": 72, "y": 710, "width": 180, "height": 35 }
   ]
 }
@@ -61,9 +68,7 @@ Successful creation returns `201`:
     "id": "<contract UUID>",
     "title": "Consulting agreement",
     "status": "sent",
-    "recipients": [
-      { "name": "Ada Lovelace", "email": "ada@example.com", "status": "sent" }
-    ],
+    "recipients": [{ "name": "Ada Lovelace", "email": "ada@example.com", "status": "sent" }],
     "createdAt": "2026-10-21T10:00:00.000Z",
     "completedAt": null,
     "downloadUrl": null
@@ -75,10 +80,10 @@ Signing links and raw signer credentials are delivered to the intended recipient
 
 ## Read status and download
 
-| Endpoint | Response |
-| --- | --- |
-| `GET /api/contracts` | `{ "data": [...] }`, up to the latest 100 contracts owned by the authenticated email, newest first. |
-| `GET /api/contracts/{id}` | `{ "data": { ... } }` with current status, recipient progress, and final-download availability. |
+| Endpoint                      | Response                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `GET /api/contracts`          | `{ "data": [...] }`, up to the latest 100 contracts owned by the authenticated email, newest first.    |
+| `GET /api/contracts/{id}`     | `{ "data": { ... } }` with current status, recipient progress, and final-download availability.        |
 | `GET /api/contracts/{id}/pdf` | Completed PDF with signatures and audit certificate. Returns `409 FINAL_PDF_NOT_READY` until complete. |
 
 Use the same authentication for all reads. A valid token for another allowlisted owner does not grant access to a contract they did not create. Non-owned, deleted, and unknown contracts return `404 CONTRACT_NOT_FOUND`. Final downloads use private, no-store caching headers.
@@ -87,26 +92,35 @@ Poll the detail endpoint with a delay appropriate for human signing; increase th
 
 ## Operational failures
 
-Errors use `{ "error": { "code": "...", "message": "..." } }`. When a hosting platform service raised the failure, the error also carries `reason`, the platform client's stable error code (for example `gateway_unavailable` or `database_unavailable`); it never contains a platform message or SQL. Missing storage or mail configuration returns `503` before a draft is created. A mail provider rejection returns `502 EMAIL_DELIVERY_FAILED`; the partially prepared contract remains visible as a draft. The failed response is replayed for the original key, so retries cannot send duplicate invitations. Review that draft and delivery state before deliberately creating a replacement contract with a new key.
+Errors use `{ "error": { "code": "...", "message": "..." } }`. When a hosting platform service raised the failure, the error also carries `reason`, the platform client's stable error code (for example `gateway_unavailable` or `database_unavailable`); it never contains a platform message or SQL. The optional boolean `retryable` describes recovery: `false` means do not retry unchanged, while `true` permits trying again after a transient cause clears. A relay 403 needs its capability or route corrected first. An omitted field makes no retry promise.
+
+A recorded failure always replays its original status and complete body for the original key, including `retryable`. That field does not make the stored command execute again. For `GATEWAY_RATE_LIMITED`, wait and review the retained draft before deliberately creating a replacement request with a new key; the refusal proves no invitation was sent. Never change keys merely because a send or commit remains uncertain.
+
+Missing storage or mail configuration returns `503` before a draft is created. A mail provider rejection returns `502 EMAIL_DELIVERY_FAILED`; the partially prepared contract remains visible as a draft. Review that draft and delivery state before deliberately creating a replacement contract with a new key.
+
+The bundled runtime client is version 0.1.38 and decodes the relay-specific `GATEWAY_*` responses below. The API records their status, stable `reason` and `retryable` flag in the idempotency receipt.
 
 The hosting platform's own refusals and unconfirmed calls are recorded and replayed the same way. Unless the message says otherwise, the draft's signing link stays inactive:
 
-| Status | Code | Meaning |
-| --- | --- | --- |
-| `429` | `MAIL_DAILY_LIMIT` | The project's daily email limit (shared by Dev and Prod, UTC day) is used up; no invitation was sent. |
-| `423` | `MAIL_SENDER_SUSPENDED` | Sending is suspended after bounces or complaints; no invitation was sent. |
-| `402` | `PAID_PLAN_REQUIRED`, `INSUFFICIENT_ORGANIZATION_CREDITS`, `PROJECT_BUDGET_EXCEEDED` | The workspace cannot pay for the email; no invitation was sent. |
-| `503` | `PLATFORM_CONFIGURATION_INVALID` | A platform service refused the request, usually a sender address that the mail binding does not list; no invitation was sent. |
-| `503` | `EMAIL_DELIVERY_UNCERTAIN` | The mail gateway accepted the request but could not yet confirm delivery, so the invitation may or may not have been delivered. Check with the recipient, then create a new request with a new key. |
-| `503` | `PLATFORM_SERVICE_UNAVAILABLE` | A platform service did not confirm a step. `reason` is the platform's code (`gateway_unavailable`, `gateway_timeout`, `gateway_response_invalid` or `database_unavailable`) and the message says what is known for the step that failed, as listed below. |
+| Status | Code                                                                                 | Meaning                                                                                                                                                                                                                                                   |
+| ------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `403`  | `GATEWAY_NOT_ENABLED`                                                                | `reason: gateway_not_enabled`, `retryable: false`. The required mail/storage capability is not enabled. Enable it and redeploy before a new request; no invitation was sent.                                                                              |
+| `403`  | `GATEWAY_ROUTE_DENIED`                                                               | `reason: gateway_route_denied`, `retryable: false`. Use the current runtime client's supported gateway route before a new request; no invitation was sent. Editing the egress allow-list does not repair it.                                              |
+| `429`  | `GATEWAY_RATE_LIMITED`                                                               | `reason: gateway_rate_limited`, `retryable: true`. The platform gateway rate limit refused the request before any invitation was sent. Wait and review the retained draft; the original key still replays this failure.                                   |
+| `429`  | `MAIL_DAILY_LIMIT`                                                                   | The project's daily email limit (shared by Dev and Prod, UTC day) is used up; no invitation was sent.                                                                                                                                                     |
+| `423`  | `MAIL_SENDER_SUSPENDED`                                                              | Sending is suspended after bounces or complaints; no invitation was sent.                                                                                                                                                                                 |
+| `402`  | `PAID_PLAN_REQUIRED`, `INSUFFICIENT_ORGANIZATION_CREDITS`, `PROJECT_BUDGET_EXCEEDED` | The workspace cannot pay for the email; no invitation was sent.                                                                                                                                                                                           |
+| `503`  | `PLATFORM_CONFIGURATION_INVALID`                                                     | A platform service refused the request, usually a sender address that the mail binding does not list; no invitation was sent.                                                                                                                             |
+| `503`  | `EMAIL_DELIVERY_UNCERTAIN`                                                           | The mail gateway accepted the request but could not yet confirm delivery, so the invitation may or may not have been delivered. Check with the recipient, then create a new request with a new key.                                                       |
+| `503`  | `PLATFORM_SERVICE_UNAVAILABLE`                                                       | A platform service did not confirm a step. `reason` is the platform's code (`gateway_unavailable`, `gateway_timeout`, `gateway_response_invalid` or `database_unavailable`) and the message says what is known for the step that failed, as listed below. |
 
 What the message of `PLATFORM_SERVICE_UNAVAILABLE` says depends on the step that was in progress:
 
-| Step | What is known |
-| --- | --- |
-| Saving the draft | The database did not confirm saving the draft. Nothing was uploaded and no invitation was sent. Create a new request with a new key. |
-| Uploading the PDF | File storage did not confirm the upload. No invitation was sent; the draft is kept and its signing link stays inactive. Create a new request with a new key. |
-| Sending the invitation | The invitation may or may not have been delivered. The draft is kept and its signing link stays inactive. Check the contract list, then create a new request with a new key. |
+| Step                        | What is known                                                                                                                                                                                                                                                |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Saving the draft            | The database did not confirm saving the draft. Nothing was uploaded and no invitation was sent. Create a new request with a new key.                                                                                                                         |
+| Uploading the PDF           | File storage did not confirm the upload. No invitation was sent; the draft is kept and its signing link stays inactive. Create a new request with a new key.                                                                                                 |
+| Sending the invitation      | The invitation may or may not have been delivered. The draft is kept and its signing link stays inactive. Check the contract list, then create a new request with a new key.                                                                                 |
 | Activating the signing link | The invitation was sent, but the database did not confirm activating its signing link, so the link may not work. Check the contract list: if the contract is still a draft, create a new request with a new key; the recipient then receives a second email. |
 
 A recorded failure never replaces a success that the same command already recorded.

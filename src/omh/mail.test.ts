@@ -340,6 +340,29 @@ describe("which mail failures prove that no mail was sent", () => {
 	});
 
 	it.each([
+		[403, "gateway_not_enabled", false],
+		[403, "gateway_route_denied", false],
+		[429, "gateway_rate_limited", true],
+	] as const)("recognizes the real runtime client's relay answer %i %s as a refusal before sending", async (status, code, retryable) => {
+		const { env, fetcher } = managedMail();
+		fetcher.mockImplementationOnce(async () => Response.json({ code }, { status }));
+		const failure = await sendOmhMail(env, message).catch((error: unknown) => error);
+		expect(failure).toMatchObject({ code, status, retryable });
+		expect(isMailRefusedBeforeSending(failure)).toBe(true);
+		expect(fetcher).toHaveBeenCalledOnce();
+	});
+
+	it("does not treat a relay code on an unexpected status as proof that no mail left", async () => {
+		for (const code of ["gateway_not_enabled", "gateway_route_denied", "gateway_rate_limited"]) {
+			const { env, fetcher } = managedMail();
+			fetcher.mockImplementationOnce(async () => Response.json({ code }, { status: 503 }));
+			const failure = await sendOmhMail(env, message).catch((error: unknown) => error);
+			expect(failure).toMatchObject({ code: "gateway_unavailable", status: 503, retryable: true });
+			expect(isMailRefusedBeforeSending(failure)).toBe(false);
+		}
+	});
+
+	it.each([
 		// The message or recipient was judged unacceptable: a bad address stays counted.
 		"mail_rejected",
 		// The gateway or the way to it failed: the mail may have been sent before or after.

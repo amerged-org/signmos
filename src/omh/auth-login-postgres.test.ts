@@ -162,6 +162,9 @@ describe("administrator login mail budget", () => {
  */
 describe("the unit of a login mail whose send the platform refused", () => {
 	it.each([
+		[403, "gateway_not_enabled", "gateway_not_enabled"],
+		[403, "gateway_route_denied", "gateway_route_denied"],
+		[429, "gateway_rate_limited", "gateway_rate_limited"],
 		[400, "invalid_request", "gateway_request_invalid"],
 		[401, "unauthorized", "unauthorized"],
 		[402, "paid_plan_required", "paid_plan_required"],

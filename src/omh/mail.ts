@@ -1,4 +1,4 @@
-import { CustomerRuntimeError } from "@ohmyhost/customer-runtime";
+import { CustomerRuntimeError, CustomerRuntimeGatewayError } from "@ohmyhost/customer-runtime";
 import { createTransactionalMailClient } from "@ohmyhost/customer-runtime/mail";
 
 export interface OmhMailEnv {
@@ -86,7 +86,16 @@ const REFUSED_BEFORE_SENDING: ReadonlySet<string> = new Set([
 
 /** Whether `error` proves that the mail was not sent, so a caller may hand back what the attempt cost. */
 export function isMailRefusedBeforeSending(error: unknown): boolean {
-	return error instanceof CustomerRuntimeError && REFUSED_BEFORE_SENDING.has(error.code);
+	if (!(error instanceof CustomerRuntimeError)) return false;
+	if (REFUSED_BEFORE_SENDING.has(error.code)) return true;
+	if (!(error instanceof CustomerRuntimeGatewayError)) return false;
+	// Relay denials happen before the gateway contacts the provider. Keep a mismatched response
+	// or an unavailable gateway uncertain, even if somebody attached one of these code strings.
+	const code: string = error.code;
+	return (
+		(error.status === 403 && (code === "gateway_not_enabled" || code === "gateway_route_denied")) ||
+		(error.status === 429 && code === "gateway_rate_limited")
+	);
 }
 
 export function hasOmhMail(env: OmhMailEnv | undefined): boolean {

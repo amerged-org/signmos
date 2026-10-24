@@ -335,10 +335,13 @@ describe("owner contract API", () => {
 		).toBe(firstRow(envelopes).id);
 	});
 
-	it("records a mail gateway refusal so the original key replays it without another invitation", async () => {
-		const gateway = vi.fn(async () =>
-			Response.json({ code: "mail_send_daily_limit" }, { status: 429 }),
-		);
+	it.each([
+		[429, "mail_send_daily_limit", "MAIL_DAILY_LIMIT", undefined],
+		[403, "gateway_not_enabled", "GATEWAY_NOT_ENABLED", false],
+		[403, "gateway_route_denied", "GATEWAY_ROUTE_DENIED", false],
+		[429, "gateway_rate_limited", "GATEWAY_RATE_LIMITED", true],
+	] as const)("records a mail gateway refusal %i %s so its key replays without another invitation", async (status, code, apiCode, retryable) => {
+		const gateway = vi.fn(async () => Response.json({ code }, { status }));
 		setOmhMailTransport(gateway);
 		env = {
 			...env,
@@ -349,16 +352,20 @@ describe("owner contract API", () => {
 			SIGN_FROM_EMAIL: "contracts@mail.example.test",
 		} as unknown as Env;
 		const first = await send();
-		expect(first.status).toBe(429);
-		await expect(first.json()).resolves.toMatchObject({ error: { code: "MAIL_DAILY_LIMIT" } });
+		expect(first.status).toBe(status);
+		const original = await first.json();
+		expect(original).toMatchObject({ error: { code: apiCode } });
+		if (retryable !== undefined)
+			expect(original).toMatchObject({ error: { reason: code, retryable } });
 		const replay = await send();
-		expect(replay.status).toBe(429);
-		await expect(replay.json()).resolves.toMatchObject({ error: { code: "MAIL_DAILY_LIMIT" } });
+		expect(replay.status).toBe(status);
+		await expect(replay.json()).resolves.toEqual(original);
+		expect((await send({ ...payload, title: "Changed" })).status).toBe(409);
 		expect(gateway).toHaveBeenCalledTimes(1);
 		expect(firstRow(envelopes).status).toBe("draft");
 		expect(firstRow(signerTokens).status).toBe("revoked");
 		expect(
-			contractRows(agenticCommandRecords).find((row) => row.responseStatus === 429)?.state,
+			contractRows(agenticCommandRecords).find((row) => row.responseStatus === status)?.state,
 		).toBe("completed");
 	});
 

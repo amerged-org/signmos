@@ -153,6 +153,7 @@ async function completeFailedCommand(recordId: string, error: unknown): Promise<
 			code: known.code,
 			message: known.message,
 			...(known.reason ? { reason: known.reason } : {}),
+			...(known.retryable === undefined ? {} : { retryable: known.retryable }),
 		},
 	};
 	// A commit whose answer was lost may already have completed the command with its true receipt:

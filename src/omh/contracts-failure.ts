@@ -83,13 +83,35 @@ function unconfirmed(phase: CreationPhase | null): string {
 }
 
 /** Every recorded runtime failure carries the platform client's code as its `reason`. */
-function runtimeFailure(
-	code: CustomerRuntimeError["code"],
-	phase: CreationPhase | null,
-): ContractError | null {
-	const refuse = (apiCode: string, message: string, status: ContractError["status"]) =>
-		new ContractError(apiCode, message, status, code);
+function runtimeFailure(code: string, phase: CreationPhase | null): ContractError | null {
+	const refuse = (
+		apiCode: string,
+		message: string,
+		status: ContractError["status"],
+		retryable?: boolean,
+	) => new ContractError(apiCode, message, status, code, retryable);
 	switch (code) {
+		case "gateway_not_enabled":
+			return refuse(
+				"GATEWAY_NOT_ENABLED",
+				`The platform gateway capability is not enabled; no invitation was sent. ${DRAFT_KEPT} Enable the required mail or storage capability and redeploy before creating a new request with a new Idempotency-Key.`,
+				403,
+				false,
+			);
+		case "gateway_route_denied":
+			return refuse(
+				"GATEWAY_ROUTE_DENIED",
+				`The platform refused this gateway route; no invitation was sent. ${DRAFT_KEPT} Use the current runtime client's supported routes before creating a new request with a new Idempotency-Key.`,
+				403,
+				false,
+			);
+		case "gateway_rate_limited":
+			return refuse(
+				"GATEWAY_RATE_LIMITED",
+				`The platform gateway rate limit was reached; no invitation was sent. ${DRAFT_KEPT} Wait, then review this draft before deliberately creating a new request with a new Idempotency-Key. The original key replays this result.`,
+				429,
+				true,
+			);
 		case "mail_send_limit_exceeded":
 			return refuse(
 				"MAIL_DAILY_LIMIT",
