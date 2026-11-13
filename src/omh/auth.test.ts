@@ -172,6 +172,16 @@ describe("amerged Sign administrator boundary", () => {
 		expect("response" in other && other.response.status).toBe(303);
 	});
 
+	it("allows the public email logo to load without a session", async () => {
+		const image = await authorizeHostedRequest(request("/amerged-logo-email.png"), {});
+		expect("request" in image).toBe(true);
+		const mutation = await authorizeHostedRequest(
+			request("/amerged-logo-email.png", { method: "POST" }),
+			{},
+		);
+		expect("response" in mutation && mutation.response.status).toBe(303);
+	});
+
 	it("accepts only current allowlisted sessions and active allowlisted API tokens", async () => {
 		const cookie = `signmos_history_session=${rawSession}`;
 		expect(

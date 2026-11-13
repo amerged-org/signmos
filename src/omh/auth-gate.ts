@@ -32,7 +32,11 @@ export async function authorizeHostedRequest(
 ): Promise<HostedRequestAuthorization> {
 	const clean = cleanRequest(request);
 	const path = new URL(clean.url).pathname;
-	if (path === "/api/health/live" || (path === "/openapi.json" && request.method === "GET"))
+	if (
+		path === "/api/health/live" ||
+		(path === "/openapi.json" && request.method === "GET") ||
+		(path === "/amerged-logo-email.png" && ["GET", "HEAD"].includes(request.method))
+	)
 		return { request: clean };
 	if (path.startsWith("/api/auth/") || publicApiPaths.some((pattern) => pattern.test(path)))
 		return { request: clean };

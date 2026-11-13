@@ -13,7 +13,7 @@ describe("amerged Sign email layout", () => {
 			},
 			note: "Der Link ist 7 Tage gültig.",
 		});
-		expect(html).toContain("https://amerged.com/brand/assets/amerged-logo-email.png");
+		expect(html).toContain("https://sign.amerged.com/amerged-logo-email.png");
 		expect(html).toContain("#b12c2b");
 		expect(html).toContain("#171717");
 		expect(html).toContain("Hallo &lt;Ada &amp; Grace&gt;,");
