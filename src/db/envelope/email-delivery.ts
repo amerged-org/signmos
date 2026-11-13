@@ -1,3 +1,4 @@
+import { renderBrandedEmail } from "@/lib/branded-email";
 import { hasOmhMail, type OmhMailEnv, sendOmhMail } from "@/omh/mail";
 
 export interface EmailDeliveryEnv extends OmhMailEnv {
@@ -126,7 +127,16 @@ export function buildPartnerVerificationEmail(
 		to: input.email,
 		subject: "Deine Unterschrift wird benötigt · amerged Sign",
 		text: `Hallo ${name},\n\nein Vertrag wartet auf deine Unterschrift. Über den persönlichen Link bestätigst du deine E-Mail-Adresse und kannst den Vertrag prüfen und unterschreiben:\n${input.verificationUrl}\n\nDer Link ist 7 Tage gültig.\n\namerged Sign`,
-		html: `<p>Hallo ${escapeHtml(name)},</p><p>Ein Vertrag wartet auf deine Unterschrift. Über den persönlichen Link bestätigst du deine E-Mail-Adresse und kannst den Vertrag prüfen und unterschreiben.</p><p><a href="${escapeHtml(input.verificationUrl)}">Vertrag prüfen und unterschreiben</a></p><p>Der Link ist 7 Tage gültig.</p><p>amerged Sign</p>`,
+		html: renderBrandedEmail({
+			eyebrow: "UNTERSCHRIFT",
+			title: "Ein Vertrag wartet auf dich",
+			paragraphs: [
+				`Hallo ${name},`,
+				"über deinen persönlichen Link bestätigst du deine E-Mail-Adresse und kannst den Vertrag prüfen und unterschreiben.",
+			],
+			action: { label: "Vertrag prüfen und unterschreiben", url: input.verificationUrl },
+			note: "Der Link ist 7 Tage gültig.",
+		}),
 	};
 }
 
@@ -138,7 +148,16 @@ export function buildSenderVerificationEmail(
 		to: input.email,
 		subject: "E-Mail-Adresse bestätigen · amerged Sign",
 		text: `Hallo ${name},\n\nbestätige deine E-Mail-Adresse, um deinen Vertrag bei amerged Sign vorzubereiten:\n${input.verificationUrl}\n\nDer Link ist 30 Minuten gültig.\n\namerged Sign`,
-		html: `<p>Hallo ${escapeHtml(name)},</p><p>Bestätige deine E-Mail-Adresse, um deinen Vertrag bei amerged Sign vorzubereiten.</p><p><a href="${escapeHtml(input.verificationUrl)}">E-Mail-Adresse bestätigen</a></p><p>Der Link ist 30 Minuten gültig.</p><p>amerged Sign</p>`,
+		html: renderBrandedEmail({
+			eyebrow: "E-MAIL BESTÄTIGEN",
+			title: "Dein Zugang zum Vertrag",
+			paragraphs: [
+				`Hallo ${name},`,
+				"bestätige deine E-Mail-Adresse, um deinen Vertrag bei amerged Sign vorzubereiten.",
+			],
+			action: { label: "E-Mail-Adresse bestätigen", url: input.verificationUrl },
+			note: "Der Link ist 30 Minuten gültig.",
+		}),
 	};
 }
 
@@ -148,7 +167,13 @@ export function buildSenderSigningEmail(input: SenderSigningEmailInput): Transac
 		to: input.email,
 		subject: "Dein Vertrag ist bereit zur Unterschrift · amerged Sign",
 		text: `Hallo ${name},\n\ndein Vertrag ist bereit für deine Unterschrift:\n${input.signingUrl}\n\nDer Link ist 7 Tage gültig.\n\namerged Sign`,
-		html: `<p>Hallo ${escapeHtml(name)},</p><p>Dein Vertrag ist bereit für deine Unterschrift.</p><p><a href="${escapeHtml(input.signingUrl)}">Vertrag unterschreiben</a></p><p>Der Link ist 7 Tage gültig.</p><p>amerged Sign</p>`,
+		html: renderBrandedEmail({
+			eyebrow: "UNTERSCHRIFT",
+			title: "Dein Vertrag ist bereit",
+			paragraphs: [`Hallo ${name},`, "dein Vertrag ist bereit für deine Unterschrift."],
+			action: { label: "Vertrag unterschreiben", url: input.signingUrl },
+			note: "Der Link ist 7 Tage gültig.",
+		}),
 	};
 }
 
@@ -160,7 +185,12 @@ export function buildSenderPartnerSignedEmail(
 		to: input.email,
 		subject: "Dein Vertrag wurde unterzeichnet · amerged Sign",
 		text: `${signerName} hat deinen Vertrag unterzeichnet.\n\nVertragsstatus ansehen:\n${input.statusUrl}\n\namerged Sign`,
-		html: `<p>${escapeHtml(signerName)} hat deinen Vertrag unterzeichnet.</p><p><a href="${escapeHtml(input.statusUrl)}">Vertragsstatus ansehen</a></p><p>amerged Sign</p>`,
+		html: renderBrandedEmail({
+			eyebrow: "VERTRAGSSTATUS",
+			title: "Eine Unterschrift ist da",
+			paragraphs: [`${signerName} hat deinen Vertrag unterzeichnet.`],
+			action: { label: "Vertragsstatus ansehen", url: input.statusUrl },
+		}),
 	};
 }
 
@@ -171,7 +201,13 @@ export function buildSenderChangeRequestEmail(
 		to: input.email,
 		subject: "Änderungen an deinem Vertrag angefragt · amerged Sign",
 		text: `Ein Empfänger hat vor der Unterschrift um Änderungen gebeten.\n\nKommentar:\n${input.comment}\n\nÜberarbeitete PDF hochladen:\n${input.revisionUrl}\n\namerged Sign`,
-		html: `<p>Ein Empfänger hat vor der Unterschrift um Änderungen gebeten.</p><p><strong>Kommentar:</strong></p><p>${escapeHtml(input.comment)}</p><p><a href="${escapeHtml(input.revisionUrl)}">Überarbeitete PDF hochladen</a></p><p>amerged Sign</p>`,
+		html: renderBrandedEmail({
+			eyebrow: "ÄNDERUNGSANFRAGE",
+			title: "Eine Änderung wurde angefragt",
+			paragraphs: ["Ein Empfänger hat vor der Unterschrift um Änderungen gebeten."],
+			details: [{ label: "KOMMENTAR", value: input.comment }],
+			action: { label: "Überarbeitete PDF hochladen", url: input.revisionUrl },
+		}),
 	};
 }
 
@@ -182,7 +218,17 @@ export function buildHumanReviewEmail(input: HumanReviewEmailInput): Transaction
 		to: input.email,
 		subject: `Freigabe angefragt: ${documentName} · amerged Sign`,
 		text: `${agentName} fragt an: ${input.actionLabel}\n\nVertrag: ${documentName}\nAuswirkung: ${input.consequence}\nGültig bis: ${input.expiresAt}\n\nIn amerged Sign prüfen:\n${input.reviewUrl}`,
-		html: `<p>${escapeHtml(agentName)} fragt an: <strong>${escapeHtml(input.actionLabel)}</strong>.</p><p><strong>Vertrag:</strong> ${escapeHtml(documentName)}</p><p><strong>Auswirkung:</strong> ${escapeHtml(input.consequence)}</p><p><strong>Gültig bis:</strong> ${escapeHtml(input.expiresAt)}</p><p><a href="${escapeHtml(input.reviewUrl)}">In amerged Sign prüfen</a></p>`,
+		html: renderBrandedEmail({
+			eyebrow: "FREIGABE",
+			title: "Deine Freigabe ist gefragt",
+			paragraphs: [`${agentName} fragt an: ${input.actionLabel}.`],
+			details: [
+				{ label: "VERTRAG", value: documentName },
+				{ label: "AUSWIRKUNG", value: input.consequence },
+				{ label: "GÜLTIG BIS", value: input.expiresAt },
+			],
+			action: { label: "In amerged Sign prüfen", url: input.reviewUrl },
+		}),
 	};
 }
 
@@ -200,12 +246,4 @@ function getResendConfig(env: EmailDeliveryEnv | undefined): ResendConfig | null
 	const replyToEmail = env?.RESEND_REPLY_TO_EMAIL?.trim();
 	if (!apiKey || !fromEmail || !replyToEmail) return null;
 	return { apiKey, fromEmail, replyToEmail };
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;");
 }

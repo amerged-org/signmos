@@ -16,6 +16,10 @@ interface ContractListProps {
 
 const statuses: Record<string, { label: string; tone: StatusTone }> = {
 	draft: { label: "Entwurf", tone: "neutral" },
+	preparing: { label: "In Vorbereitung", tone: "neutral" },
+	queued: { label: "Versand vorbereitet", tone: "info" },
+	delivery_failed: { label: "Versand fehlgeschlagen", tone: "warning" },
+	manual_review: { label: "Prüfung erforderlich", tone: "destructive" },
 	awaiting_verification: { label: "Bestätigung ausstehend", tone: "warning" },
 	sent: { label: "Zur Unterschrift", tone: "info" },
 	in_progress: { label: "In Bearbeitung", tone: "info" },
@@ -44,10 +48,10 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 	);
 
 	return (
-		<Panel className="space-y-5">
+		<Panel className="space-y-6 rounded-none border-0 border-t border-foreground p-0 pt-6 shadow-none sm:p-0 sm:pt-6">
 			<div className="flex flex-wrap items-center justify-between gap-3">
-				<PanelTitle>Alle Verträge</PanelTitle>
-				<span className="text-muted-foreground text-xs tabular-nums">
+				<PanelTitle className="font-serif text-2xl font-normal">Alle Verträge</PanelTitle>
+				<span className="font-mono text-[10px] uppercase tracking-[0.06em] text-muted-foreground tabular-nums">
 					{contracts.length} {contracts.length === 1 ? "Vertrag" : "Verträge"}
 				</span>
 			</div>
@@ -90,17 +94,17 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 						</div>
 					</div>
 					{visible.length ? (
-						<div className="-mx-5 overflow-x-auto sm:-mx-6">
+						<div className="overflow-x-auto">
 							<table className="w-full text-left text-sm">
-								<thead className="border-y bg-muted/30 text-muted-foreground text-xs">
+								<thead className="border-y font-mono text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
 									<tr>
-										<th scope="col" className="px-5 py-3 font-medium sm:px-6">
+										<th scope="col" className="pr-5 py-3 font-normal">
 											Vertrag
 										</th>
-										<th scope="col" className="px-4 py-3 font-medium">
+										<th scope="col" className="px-4 py-3 font-normal">
 											Status
 										</th>
-										<th scope="col" className="px-4 py-3 font-medium">
+										<th scope="col" className="px-4 py-3 font-normal">
 											Gesendet
 										</th>
 										<th scope="col" className="px-5 py-3 sm:px-6">
@@ -116,9 +120,9 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 										};
 										return (
 											<tr key={contract.id} className="transition-colors hover:bg-muted/20">
-												<th scope="row" className="min-w-52 px-5 py-4 font-normal sm:px-6">
+												<th scope="row" className="min-w-52 py-4 pr-5 font-normal">
 													<div className="flex items-start gap-3">
-														<span className="mt-0.5 rounded-lg border bg-muted/30 p-2">
+														<span className="mt-0.5 border p-2">
 															<FileText
 																aria-hidden="true"
 																className="size-4 text-muted-foreground"

@@ -12,6 +12,7 @@ import {
 } from "@/db/history-access";
 import { assertHistoryRequestRateLimits } from "@/db/history-access/request-abuse";
 import { getDb } from "@/db/setup";
+import { renderBrandedEmail } from "@/lib/branded-email";
 import { type AdminAuthEnv, isAllowedAdmin } from "./auth";
 
 export async function requestAdminLogin(input: {
@@ -47,7 +48,13 @@ export async function requestAdminLogin(input: {
 			to: email,
 			subject: "Dein Login für amerged Sign",
 			text: `Öffne deinen sicheren Login-Link:\n${accessUrl}\n\nDer Link ist 15 Minuten gültig und kann einmal verwendet werden.`,
-			html: `<p>Dein sicherer Login für amerged Sign:</p><p><a href="${accessUrl.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">Bei amerged Sign anmelden</a></p><p>Der Link ist 15 Minuten gültig und kann einmal verwendet werden.</p>`,
+			html: renderBrandedEmail({
+				eyebrow: "ANMELDUNG",
+				title: "Dein Zugang zu amerged Sign",
+				paragraphs: ["Melde dich über deinen persönlichen Link bei amerged Sign an."],
+				action: { label: "Bei amerged Sign anmelden", url: accessUrl },
+				note: "Der Link ist 15 Minuten gültig und kann einmal verwendet werden. Falls du ihn nicht angefordert hast, kannst du diese E-Mail ignorieren.",
+			}),
 		},
 		input.emailDelivery,
 	);

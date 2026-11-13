@@ -23,7 +23,7 @@ import {
 import { ConsoleBrand, ConsoleFooter } from "@/components/console/console-brand";
 import { ContractList } from "@/components/console/contract-list";
 import { NewContract } from "@/components/console/new-contract";
-import { PageHeader, PageShell } from "@/components/layout/page-shell";
+import { PageShell } from "@/components/layout/page-shell";
 import { LoadingText } from "@/components/patterns/loading-text";
 import { Panel } from "@/components/patterns/panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -120,10 +120,10 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 
 	return (
 		<PageShell width="wide" className="sm:py-8">
-			<header className="flex flex-wrap items-center justify-between gap-5 border-b pb-6">
+			<header className="flex flex-wrap items-center justify-between gap-5 border-b border-foreground pb-6">
 				<ConsoleBrand />
 				<div className="flex items-center gap-3">
-					<span className="max-w-48 truncate text-muted-foreground text-xs sm:max-w-none">
+					<span className="max-w-48 truncate font-mono text-[10px] text-muted-foreground sm:max-w-none">
 						{session.email}
 					</span>
 					<Button
@@ -141,18 +141,31 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 					</Button>
 				</div>
 			</header>
-			<div className="flex flex-wrap items-end justify-between gap-5">
-				<PageHeader
-					wordmark={false}
-					title="Weniger Papierkram. Mehr Einigung."
-					lead="Deine Verträge. Vom ersten Versand bis zur letzten Unterschrift."
-				/>
+			<div className="flex flex-wrap items-end justify-between gap-6 py-5 sm:py-8">
+				<div className="max-w-2xl space-y-4">
+					<p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+						<span className="text-destructive">01 /</span> Dein Arbeitsbereich
+					</p>
+					<h1 className="text-balance font-serif text-4xl font-normal leading-[1.1] tracking-[-0.035em] sm:text-5xl">
+						Weniger Papierkram.
+						<br />
+						<em>Mehr Einigung</em>
+						<span className="text-destructive">.</span>
+					</h1>
+					<p className="font-serif text-base leading-7 text-muted-foreground sm:text-lg">
+						Deine Verträge. Vom ersten Versand bis zur letzten Unterschrift.
+					</p>
+				</div>
 				<Button size="lg" onClick={startContract}>
 					<Plus aria-hidden="true" />
 					Vertrag versenden
 				</Button>
 			</div>
-			<div className="flex gap-1 border-b" role="tablist" aria-label="Arbeitsbereich">
+			<div
+				className="flex gap-2 border-b border-foreground"
+				role="tablist"
+				aria-label="Arbeitsbereich"
+			>
 				<button
 					id="tab-contracts"
 					type="button"
@@ -161,7 +174,7 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 					aria-controls="panel-contracts"
 					tabIndex={tab === "contracts" ? 0 : -1}
 					onKeyDown={changeTab}
-					className={`inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-ring ${tab === "contracts" ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+					className={`inline-flex min-h-12 items-center gap-2 border-b-2 px-3 py-3 font-mono text-[11px] uppercase tracking-[0.06em] transition-colors focus-visible:outline-2 focus-visible:outline-ring ${tab === "contracts" ? "border-destructive text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
 					onClick={() => setTab("contracts")}
 				>
 					<FileText aria-hidden="true" className="size-4" />
@@ -175,7 +188,7 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 					aria-controls="panel-api"
 					tabIndex={tab === "api" ? 0 : -1}
 					onKeyDown={changeTab}
-					className={`inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-ring ${tab === "api" ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+					className={`inline-flex min-h-12 items-center gap-2 border-b-2 px-3 py-3 font-mono text-[11px] uppercase tracking-[0.06em] transition-colors focus-visible:outline-2 focus-visible:outline-ring ${tab === "api" ? "border-destructive text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
 					onClick={() => setTab("api")}
 				>
 					<Code2 aria-hidden="true" className="size-4" />
@@ -209,21 +222,26 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 							</AlertDescription>
 						</Alert>
 					) : null}
-					<div className="grid grid-cols-3 gap-3 sm:gap-5">
+					<div className="grid grid-cols-3 gap-4 sm:gap-8">
 						{[
 							{ label: "Verträge gesamt", value: total, Icon: FileText },
 							{ label: "Unterschrift offen", value: open, Icon: FileClock },
 							{ label: "Unterzeichnet", value: completed, Icon: FileCheck2 },
 						].map(({ label, value, Icon }) => (
-							<Panel key={label} className="space-y-4 p-4 sm:p-5">
+							<Panel
+								key={label}
+								className="space-y-4 rounded-none border-0 border-t border-foreground p-0 pt-4 shadow-none sm:p-0 sm:pt-4"
+							>
 								<div className="flex items-center justify-between gap-2">
-									<span className="text-muted-foreground text-xs leading-5">{label}</span>
+									<span className="font-mono text-[10px] uppercase leading-5 tracking-[0.06em] text-muted-foreground">
+										{label}
+									</span>
 									<Icon
 										aria-hidden="true"
 										className="hidden size-4 text-muted-foreground sm:block"
 									/>
 								</div>
-								<p className="font-medium text-3xl tabular-nums">{value ?? "–"}</p>
+								<p className="font-serif text-4xl tabular-nums">{value ?? "–"}</p>
 							</Panel>
 						))}
 					</div>

@@ -181,6 +181,14 @@ export function SignerPage(props: SignerPageProps) {
 						: "Prüfe den Vertrag und bestätige ihn mit deiner Unterschrift."
 				}
 			/>
+			{session && (
+				<a
+					href="#signer-fields"
+					className="inline-flex min-h-11 items-center border-b border-destructive font-mono text-xs uppercase tracking-wide text-foreground lg:hidden"
+				>
+					Zu deinen Angaben ↓
+				</a>
+			)}
 			{error && (
 				<Alert variant="destructive" role="alert">
 					<AlertTitle>{error.message}</AlertTitle>
@@ -225,45 +233,69 @@ export function SignerPage(props: SignerPageProps) {
 					</span>
 				</LoadingText>
 			)}
-			{session?.sourceDocument && (
-				<SigningDocumentPreview
-					session={session}
-					canDragFields={session.signingMode === "only_me"}
-					onStartFieldDrag={startFieldDrag}
-					onContinueFieldDrag={continueFieldDrag}
-					onStopFieldDrag={stopFieldDrag}
-				/>
-			)}
 			{session && (
 				<>
-					<Panel className="grid gap-3 md:grid-cols-2">
-						{session.fields.length === 0 ? (
-							<div className="space-y-1 md:col-span-2">
-								<p className="font-medium">Keine Unterschriftsfelder vorhanden</p>
-								<p className="text-pretty text-muted-foreground text-sm">
-									{session.signingMode === "only_me"
-										? "Für diesen Vertrag sind keine Unterschrifts- oder Datumsfelder vorhanden."
-										: "Bitte fordere eine Änderung an, wenn eine Unterschrift oder ein Datumsfeld fehlt."}
+					<div className="grid items-start gap-10 border-t border-foreground pt-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)] lg:gap-12">
+						<SigningDocumentPreview
+							session={session}
+							canDragFields={session.signingMode === "only_me"}
+							onStartFieldDrag={startFieldDrag}
+							onContinueFieldDrag={continueFieldDrag}
+							onStopFieldDrag={stopFieldDrag}
+						/>
+						<div id="signer-fields" className="scroll-mt-6 space-y-6 lg:sticky lg:top-8">
+							<div className="space-y-3">
+								<p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+									<span className="mr-2 text-destructive">02 /</span> Ausfüllen &amp; bestätigen
+								</p>
+								<h2 className="font-serif text-3xl font-normal leading-tight">
+									{session.fields.some((field) => field.type === "signature")
+										? "Bereit für deine Unterschrift"
+										: "Deine Angaben"}
+									<span className="text-destructive">.</span>
+								</h2>
+								<p className="max-w-md text-sm leading-6 text-muted-foreground">
+									Prüfe den Vertrag und fülle die zugewiesenen Felder aus.
 								</p>
 							</div>
-						) : (
-							session.fields.map((field) => (
-								<div key={field.id} className="rounded-lg border bg-muted/30 p-3">
-									<p className="font-medium">{signerFieldLabel(field)}</p>
-									<p className="text-muted-foreground text-sm tabular-nums">Seite {field.page}</p>
-								</div>
-							))
-						)}
-					</Panel>
-					<PartnerSignatureForm
-						key={session.signaturePreference?.id ?? "new-partner-signature"}
-						initialPreference={session.signaturePreference}
-						fields={session.fields}
-						disabled={changeRequested || session.fields.length === 0}
-						onSubmit={completeSigning}
-					/>
+							<Panel className="grid gap-0 border-x-0 border-b-0 border-t border-foreground bg-transparent p-0 shadow-none sm:p-0">
+								{session.fields.length === 0 ? (
+									<div className="space-y-1 md:col-span-2">
+										<p className="font-medium">Keine Unterschriftsfelder vorhanden</p>
+										<p className="text-pretty text-muted-foreground text-sm">
+											{session.signingMode === "only_me"
+												? "Für diesen Vertrag sind keine Unterschrifts- oder Datumsfelder vorhanden."
+												: "Bitte fordere eine Änderung an, wenn eine Unterschrift oder ein Datumsfeld fehlt."}
+										</p>
+									</div>
+								) : (
+									session.fields.map((field) => (
+										<div
+											key={field.id}
+											className="flex items-baseline justify-between gap-4 border-b py-3"
+										>
+											<p>{signerFieldLabel(field)}</p>
+											<p className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground tabular-nums">
+												Seite {field.page}
+											</p>
+										</div>
+									))
+								)}
+							</Panel>
+							<PartnerSignatureForm
+								key={session.signaturePreference?.id ?? "new-partner-signature"}
+								initialPreference={session.signaturePreference}
+								fields={session.fields}
+								disabled={changeRequested || session.fields.length === 0}
+								onSubmit={completeSigning}
+							/>
+						</div>
+					</div>
 					{session.signingMode !== "only_me" && (
-						<>
+						<div className="space-y-6 border-t pt-7">
+							<p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+								<span className="mr-2 text-destructive">03 /</span> Weitere Optionen
+							</p>
 							<form onSubmit={requestChanges} className="grid gap-4 md:grid-cols-3">
 								<div className="space-y-2 md:col-span-2">
 									<Label htmlFor="changeComment">Gewünschte Änderung</Label>
@@ -310,7 +342,7 @@ export function SignerPage(props: SignerPageProps) {
 									</Button>
 								</div>
 							</form>
-						</>
+						</div>
 					)}
 				</>
 			)}

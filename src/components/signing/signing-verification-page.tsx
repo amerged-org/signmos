@@ -71,7 +71,12 @@ export function SigningVerificationPage({
 
 	return (
 		<PageShell width="narrow">
-			<PageHeader title="E-Mail-Adresse bestätigen" />
+			<PageHeader title="E-Mail-Adresse bestätigen" lead="Ein sicherer Zugang zu deinem Vertrag." />
+			<div className="border-t border-foreground pt-5">
+				<p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+					<span className="mr-2 text-destructive">01 /</span> Zugang zum Dokument
+				</p>
+			</div>
 
 			{state.status === "verifying" ? (
 				<Alert>

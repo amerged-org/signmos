@@ -2,7 +2,7 @@ import type * as React from "react";
 import { cn } from "@/lib/utils";
 
 /** The one surface style for form/content panels across the app. */
-const panelClass = "rounded-xl border bg-card p-5 shadow-xs sm:p-6";
+const panelClass = "border-y border-border bg-card py-6 sm:py-8";
 
 type PanelProps<T extends React.ElementType> = {
 	as?: T;
@@ -21,7 +21,7 @@ export function PanelTitle({ className, ...props }: React.ComponentProps<"h2">) 
 	return (
 		<h2
 			data-slot="panel-title"
-			className={cn("text-balance font-semibold text-foreground text-lg", className)}
+			className={cn("text-balance font-normal text-foreground text-2xl tracking-tight", className)}
 			{...props}
 		/>
 	);
@@ -31,7 +31,7 @@ export function PanelDescription({ className, ...props }: React.ComponentProps<"
 	return (
 		<p
 			data-slot="panel-description"
-			className={cn("text-pretty text-muted-foreground text-sm", className)}
+			className={cn("text-pretty text-muted-foreground leading-relaxed", className)}
 			{...props}
 		/>
 	);

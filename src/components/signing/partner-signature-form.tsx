@@ -143,7 +143,7 @@ export function PartnerSignatureForm({
 				event.stopPropagation();
 				void form.handleSubmit();
 			}}
-			className="space-y-5"
+			className="space-y-6 border-0 border-t border-foreground bg-transparent p-0 pt-6 shadow-none sm:p-0 sm:pt-6"
 		>
 			<form.Subscribe selector={(state) => state.values}>
 				{(values) => {
@@ -178,6 +178,12 @@ export function PartnerSignatureForm({
 							)}
 							{hasSignature && includeSignature && (
 								<>
+									<div className="space-y-1">
+										<h3 className="font-serif text-xl font-normal">Deine Unterschrift</h3>
+										<p className="text-sm leading-6 text-muted-foreground">
+											Wähle, wie du unterschreiben möchtest.
+										</p>
+									</div>
 									<fieldset className="grid gap-3 sm:grid-cols-2">
 										<legend className="sr-only">Art der Unterschrift</legend>
 										<SignatureMethodButton
@@ -208,7 +214,7 @@ export function PartnerSignatureForm({
 												aria-label="Vorschau deiner Unterschrift"
 												role="img"
 												className={cn(
-													"flex h-32 items-center justify-center rounded-lg border bg-background px-4 text-pretty text-3xl",
+													"flex h-32 items-center justify-center border border-border bg-background px-4 text-pretty text-3xl",
 													fontClassName,
 												)}
 											>
@@ -260,7 +266,7 @@ export function PartnerSignatureForm({
 												aria-label="Unterschrift zeichnen"
 												role="img"
 												viewBox="0 0 320 128"
-												className="h-32 w-full touch-none rounded-lg border bg-background"
+												className="h-32 w-full touch-none border border-border bg-background"
 												onMouseDown={startDrawing}
 												onMouseMove={continueDrawing}
 												onMouseUp={stopDrawing}
@@ -284,7 +290,7 @@ export function PartnerSignatureForm({
 									)}
 								</>
 							)}
-							<div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+							<div className="grid gap-5 border-t pt-5">
 								{hasSignature && includeSignature && (
 									<form.Field name="rememberSignature">
 										{(field) => (
@@ -301,7 +307,7 @@ export function PartnerSignatureForm({
 										)}
 									</form.Field>
 								)}
-								<Button type="submit" disabled={disabled}>
+								<Button type="submit" className="w-full" size="lg" disabled={disabled}>
 									<Check className="size-4" />
 									{(hasSignature && includeSignature) || fields?.length === 0
 										? "Jetzt unterschreiben"
@@ -338,12 +344,14 @@ function SignatureMethodButton({
 			aria-label={`${title} wählen`}
 			onClick={onClick}
 			className={cn(
-				"flex min-h-24 items-start gap-3 rounded-lg border bg-background p-4 text-left transition-colors",
+				"flex min-h-24 items-start gap-3 border bg-background p-4 text-left transition-colors",
 				"hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
-				isActive && "border-primary bg-muted/40",
+				isActive && "border-foreground bg-muted/40",
 			)}
 		>
-			<span className="mt-0.5 text-muted-foreground">{icon}</span>
+			<span className={cn("mt-0.5", isActive ? "text-destructive" : "text-muted-foreground")}>
+				{icon}
+			</span>
 			<span>
 				<span className="block font-medium text-sm">{title}</span>
 				<span className="mt-1 block text-muted-foreground text-pretty text-sm">{description}</span>

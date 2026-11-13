@@ -83,15 +83,20 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 		<>
 			<Panel
 				as="form"
-				className="space-y-7"
+				className="space-y-7 rounded-none border-t-2 border-t-foreground p-6 shadow-none sm:p-8"
 				onSubmit={(event) => {
 					event.preventDefault();
 					void form.handleSubmit();
 				}}
 			>
 				<div className="flex flex-wrap items-start justify-between gap-3">
-					<div className="space-y-1">
-						<PanelTitle>Neuen Vertrag versenden</PanelTitle>
+					<div className="space-y-2">
+						<p className="font-mono text-[10px] uppercase tracking-[0.1em] text-destructive">
+							Neuer Vertrag / 01
+						</p>
+						<PanelTitle className="font-serif text-2xl font-normal">
+							Neuen Vertrag versenden
+						</PanelTitle>
 						<PanelDescription>
 							PDF auswählen. Empfänger eintragen. Unterschrift anfragen.
 						</PanelDescription>
@@ -116,7 +121,7 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 					{(field) => (
 						<div className="space-y-2">
 							<Label htmlFor="contract-pdf">Vertrag als PDF</Label>
-							<div className="relative flex flex-col items-center gap-3 rounded-xl border border-dashed bg-muted/30 px-5 py-8 text-center transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30 hover:bg-muted/60">
+							<div className="relative flex flex-col items-center gap-3 border border-dashed bg-muted/30 px-5 py-8 text-center transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30 hover:bg-muted/60">
 								{field.state.value ? (
 									<FileText aria-hidden="true" className="size-7 text-primary" />
 								) : (
@@ -292,7 +297,7 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 					</DialogHeader>
 					<form.Subscribe selector={(state) => state.values}>
 						{(value) => (
-							<dl className="space-y-3 rounded-lg bg-muted/50 p-4 text-sm">
+							<dl className="space-y-3 border bg-muted/50 p-4 text-sm">
 								<div>
 									<dt className="text-muted-foreground text-xs">Vertrag</dt>
 									<dd className="mt-1 break-words font-medium">{value.title}</dd>

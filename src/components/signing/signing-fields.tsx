@@ -38,8 +38,8 @@ export function SigningFields({
 }) {
 	if (fields.length === 0) return null;
 	return (
-		<fieldset className="grid gap-4 md:grid-cols-2">
-			<legend className="mb-3 font-medium">Deine Angaben</legend>
+		<fieldset className="grid gap-5">
+			<legend className="mb-4 font-serif text-xl">Deine Angaben</legend>
 			{fields.map((field) => {
 				const id = `signing-field-${field.id}`;
 				const currentValue = values[field.id];
@@ -47,14 +47,17 @@ export function SigningFields({
 				const label = `${signerFieldLabel(field)}${required ? " *" : " (optional)"}`;
 				if (field.type === "checkbox") {
 					return (
-						<label key={field.id} className="flex min-h-9 items-center gap-2 text-sm">
+						<label
+							key={field.id}
+							className="flex min-h-11 items-center gap-3 border-b py-2 text-sm"
+						>
 							<input
 								id={id}
 								type="checkbox"
 								checked={values[field.id] === true}
 								required={required}
 								onChange={(event) => onChange({ ...values, [field.id]: event.target.checked })}
-								className="size-4 rounded border-input"
+								className="size-4 shrink-0 accent-foreground"
 							/>
 							{label}
 						</label>
@@ -87,9 +90,10 @@ export function OptionalSignatures({
 	onChange: (values: SigningFieldValues) => void;
 }) {
 	return fields.map((field) => (
-		<label key={field.id} className="flex items-center gap-2 text-sm">
+		<label key={field.id} className="flex min-h-11 items-center gap-3 border-b py-2 text-sm">
 			<input
 				type="checkbox"
+				className="size-4 shrink-0 accent-foreground"
 				checked={values[field.id] === true}
 				onChange={(event) => onChange({ ...values, [field.id]: event.target.checked })}
 			/>

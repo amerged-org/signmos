@@ -61,35 +61,47 @@ export function SigningDocumentPreview({
 	const pages = previewPages(previewFields);
 
 	return (
-		<section className="space-y-3">
-			<div className="flex flex-wrap items-center justify-between gap-3">
-				<h2 className="text-balance font-semibold text-xl">Dein Vertrag</h2>
+		<section className="min-w-0 space-y-5" aria-label="Vertrag und Felder">
+			<div className="flex flex-wrap items-end justify-between gap-4">
+				<div className="space-y-3">
+					<p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+						<span className="mr-2 text-destructive">01 /</span> Dokument
+					</p>
+					<h2 className="font-serif text-3xl font-normal leading-tight">
+						Dein Vertrag<span className="text-destructive">.</span>
+					</h2>
+				</div>
 				<TextLink
-					className="inline-flex items-center gap-2 text-sm"
+					className="inline-flex items-center gap-2 text-sm underline underline-offset-4"
 					href={session.sourceDocument.downloadUrl}
 				>
 					<FileText aria-hidden="true" className="size-4" />
 					PDF öffnen
 				</TextLink>
 			</div>
-			<div className="space-y-2">
-				<p className="text-sm text-muted-foreground">
+			<div className="space-y-3">
+				<p className="text-sm leading-6 text-muted-foreground">
 					Lies den gesamten Vertrag, bevor du unterschreibst.
 				</p>
 				<iframe
-					className="h-[70vh] min-h-[400px] w-full rounded-md border bg-muted"
+					className="h-[70vh] min-h-[400px] w-full border border-border bg-muted"
 					src={`${session.sourceDocument.downloadUrl}#view=FitH`}
 					title="Vollständiger Vertrag"
 				/>
 			</div>
-			<h3 className="font-medium">Deine Felder im Vertrag</h3>
+			<div className="border-t pt-4">
+				<h3 className="font-serif text-xl font-normal">Deine Felder im Vertrag</h3>
+				<p className="mt-1 text-sm text-muted-foreground">
+					Die Markierungen zeigen, wo deine Angaben erscheinen.
+				</p>
+			</div>
 			<div className="grid gap-4">
 				{pages.map((page, index) => (
 					<fieldset
 						key={page}
 						aria-label={`Vertrag Seite ${page}`}
 						data-signing-pdf-page
-						className="relative aspect-[612/792] w-full overflow-hidden rounded-md border bg-white"
+						className="relative aspect-[612/792] w-full overflow-hidden border border-border bg-background"
 						onPointerMove={onContinueFieldDrag}
 						onPointerUp={onStopFieldDrag}
 						onPointerLeave={onStopFieldDrag}
@@ -138,9 +150,9 @@ function SigningPreviewFieldOverlay({
 	const isDraggable = canDrag && field.assignedToCurrentSigner && !hasValue;
 	const position = useNoncePositionStyle(field, pdfPage);
 	const className = cn(
-		"absolute flex overflow-hidden rounded border-2 px-2 text-slate-950 shadow-sm",
+		"absolute flex overflow-hidden border-2 px-2 text-foreground",
 		position.className,
-		hasValue ? "border-emerald-700 bg-white/90" : "border-blue-700 bg-blue-50/90",
+		hasValue ? "border-foreground bg-background/95" : "border-destructive bg-background/95",
 		field.assignedToCurrentSigner && !hasValue && "border-dashed",
 		isDraggable && "pointer-events-auto cursor-move",
 		field.height < 40 ? "items-center text-[10px]" : "flex-col justify-center text-xs",

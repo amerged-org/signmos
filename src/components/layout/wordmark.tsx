@@ -3,10 +3,14 @@ import { cn } from "@/lib/utils";
 function WordmarkContent() {
 	return (
 		<>
-			<span className="font-serif text-2xl text-foreground tracking-tight">
-				amerged<span className="text-destructive">.</span>
-			</span>
-			<span className="border-l pl-2 text-[11px] font-medium uppercase tracking-[0.24em]">
+			<img
+				src="/assets/amerged-wordmark.svg"
+				alt="amerged"
+				width="195"
+				height="35"
+				className="h-auto w-[156px] sm:w-[176px]"
+			/>
+			<span className="border-l border-border pl-3 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
 				Sign
 			</span>
 		</>
