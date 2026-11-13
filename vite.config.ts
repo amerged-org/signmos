@@ -6,6 +6,8 @@ import { defineConfig } from "vite";
 import viteTsConfigPaths from "vite-tsconfig-paths";
 
 const config = defineConfig({
+	// ohmyho.st accepts Worker modules but rejects source maps in its server artifact.
+	environments: { ssr: { build: { sourcemap: false } } },
 	plugins: [
 		// this is the plugin that enables path aliases
 		viteTsConfigPaths({
