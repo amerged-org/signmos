@@ -1,4 +1,4 @@
-> amerged Sign fork: production hosting is ohmyho.st, not an upstream Wrangler deployment. Follow `plans/amerged-sign-omh-prd.md`, `ohmyhost.yaml` and `docs/contracts-api.md`. `src/server.ts` wraps requests with lazy `withDatabase(env, callback)` and administrator authorization; the private OMH Drizzle driver replaces Neon HTTP. Files and transactional mail use the private OMH runtime clients. The upstream Wrangler environments, direct-deployment script and historical release evidence are retained reference material and must not be used to publish this fork. Never deploy to the upstream signmos.com hostname.
+> amerged Sign fork: production hosting is ohmyho.st, not an upstream Wrangler deployment. Follow `plans/amerged-sign-omh-prd.md`, `ohmyhost.yaml` and `docs/contracts-api.md`. `src/start.tsx` installs request middleware that dispatches through `src/omh/hosted-request.ts` with lazy `withDatabase(env, callback)` and administrator authorization; the private OMH Drizzle driver replaces Neon HTTP. Files and transactional mail use the private OMH runtime clients. The upstream Wrangler environments, direct-deployment script and historical release evidence are retained reference material and must not be used to publish this fork. Never deploy to the upstream signmos.com hostname.
 
 # Agent Guide
 
@@ -65,8 +65,8 @@ A deep module has a small public interface hiding a larger implementation.
 
 ## Hono And Worker Rules
 
-- `src/server.ts` is the custom Cloudflare Worker entry.
-- It initializes Neon/Drizzle from env bindings, routes `/api/*` to Hono, serves `/agent.md` and `/openapi.json` through the public Agent contract publisher, and routes everything else to TanStack Start.
+- `src/start.tsx` installs the global request middleware; `src/server.ts` is the local Worker entry and delegates to TanStack Start.
+- `src/omh/hosted-request.ts` wraps requests with the request-scoped OMH Drizzle adapter and administrator gate, routes `/api/*` to Hono, serves `/agent.md` and `/openapi.json` through the public Agent contract publisher, and passes other requests to TanStack Start.
 - Access bindings through `env` or `c.env`, never `process.env`.
 - Workers are stateless. Do not rely on mutable global request state.
 - Use `waitUntil()` for non-blocking work after a response when needed.

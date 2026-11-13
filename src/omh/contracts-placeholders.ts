@@ -7,11 +7,11 @@ import { isPdf } from "@/hono/api/envelope-route-helpers";
 import type { MultipartContractRequest } from "./contracts-multipart";
 import { decodePdf } from "./contracts-pdf";
 import { ContractError } from "./contracts-schema";
-import { extractPdfPlaceholders, PdfPlaceholderError } from "./pdf-placeholders";
 
 export async function preparePlaceholderContract(request: MultipartContractRequest) {
 	const bytes = decodePdf(request.pdf.base64);
 	if (!isPdf(bytes)) throw new ContractError("INVALID_SOURCE_PDF", "Source document must be a PDF");
+	const { extractPdfPlaceholders, PdfPlaceholderError } = await import("./pdf-placeholders");
 	try {
 		await loadValidatedSourcePdf(bytes);
 		const placeholders = await extractPdfPlaceholders(bytes);
