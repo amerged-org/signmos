@@ -254,6 +254,7 @@ signingEndpoint.post("/:token/complete", async (c) => {
 					error: {
 						code: error.code,
 						message: error.message,
+						...(error.phase ? { phase: error.phase, reason: error.reason } : {}),
 						retryable: true,
 						allowedActions: ["retry_completion"],
 					},

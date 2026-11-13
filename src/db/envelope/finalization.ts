@@ -2,6 +2,7 @@ import { eq, type SQL, sql } from "drizzle-orm";
 import { getDb } from "@/db/setup";
 import { envelopeArtifactVersions } from "./artifact-versions";
 import { buildCertificateMaterial, renderFinalPdf } from "./final-pdf-renderer";
+import { finalizationPhase } from "./finalization-diagnostics";
 import {
 	type Envelope,
 	EnvelopeSchema,
@@ -68,26 +69,36 @@ export async function finalizeCompletedEnvelope(
 	envelopeId: string,
 	options: FinalizeEnvelopeOptions = {},
 ) {
-	if (!options.documentsBucket) return null;
+	const documentsBucket = options.documentsBucket;
+	if (!documentsBucket) return null;
 
 	const snapshot = options.snapshot ?? (await getSigningFinalizationSnapshot(envelopeId));
 	if (snapshot.existing) {
 		if (!options.completion) return snapshot.existing;
-		return commitFinalArtifact(
-			envelopeId,
-			snapshot.existing.r2Key,
-			{ bytes: new Uint8Array(), ...snapshot.existing },
-			snapshot,
-			options.completion,
+		const existing = snapshot.existing;
+		return finalizationPhase("artifact_commit", () =>
+			commitFinalArtifact(
+				envelopeId,
+				existing.r2Key,
+				{ bytes: new Uint8Array(), ...existing },
+				snapshot,
+				options.completion,
+			),
 		);
 	}
-	const artifact = await renderFinalDocumentArtifact(envelopeId, options.documentsBucket, snapshot);
+	const artifact = await renderFinalDocumentArtifact(envelopeId, documentsBucket, snapshot);
 	const r2Key = `envelopes/${envelopeId}/final/${artifact.sha256}.pdf`;
-	await registerFinalArtifact(envelopeId, r2Key, snapshot, options.completion);
-	await options.documentsBucket.put(r2Key, artifact.bytes, {
-		httpMetadata: { contentType: artifact.contentType },
-	});
-	return commitFinalArtifact(envelopeId, r2Key, artifact, snapshot, options.completion);
+	await finalizationPhase("artifact_register", () =>
+		registerFinalArtifact(envelopeId, r2Key, snapshot, options.completion),
+	);
+	await finalizationPhase("final_upload", () =>
+		documentsBucket.put(r2Key, artifact.bytes, {
+			httpMetadata: { contentType: artifact.contentType },
+		}),
+	);
+	return finalizationPhase("artifact_commit", () =>
+		commitFinalArtifact(envelopeId, r2Key, artifact, snapshot, options.completion),
+	);
 }
 
 export interface SigningFinalizationSnapshot {
@@ -351,20 +362,23 @@ async function renderFinalDocumentArtifact(
 	snapshot: SigningFinalizationSnapshot,
 ): Promise<FinalDocumentArtifact> {
 	const sourceDocument = snapshot.sourceDocument;
-	if (!sourceDocument) throw new Error("Envelope source PDF required");
+	if (!sourceDocument)
+		return finalizationPhase("source_read", async () => {
+			throw new Error("Envelope source PDF required");
+		});
 	const rows = snapshot.rows;
 	const certificateHash = await sha256Hex(
 		new TextEncoder().encode(buildCertificateMaterial(sourceDocument, rows)),
 	);
-	const sourceObject = await documentsBucket.get(sourceDocument.r2Key);
-	if (!sourceObject) throw new Error("Envelope source PDF object required");
-	const bytes = await renderFinalPdf({
-		envelopeId,
-		sourceDocument,
-		rows,
-		certificateHash,
-		sourceBytes: new Uint8Array(await sourceObject.arrayBuffer()),
+	const sourceBytes = await finalizationPhase("source_read", async () => {
+		const sourceObject = await documentsBucket.get(sourceDocument.r2Key);
+		if (!sourceObject)
+			throw Object.assign(new Error("Missing source"), { code: "storage_object_not_found" });
+		return new Uint8Array(await sourceObject.arrayBuffer());
 	});
+	const bytes = await finalizationPhase("pdf_render", () =>
+		renderFinalPdf({ envelopeId, sourceDocument, rows, certificateHash, sourceBytes }),
+	);
 	return {
 		bytes,
 		sha256: await sha256Hex(bytes),

@@ -20,29 +20,19 @@ export function createOmhDocumentsBucket(env: OmhStorageEnv): R2Bucket {
 
 	const bucket = {
 		async get(key: string): Promise<R2ObjectBody | null> {
-			let capability: Awaited<ReturnType<typeof storage.createSignedRead>>;
-			try {
-				capability = await storage.createSignedRead(key);
-			} catch (error) {
-				if (hasCode(error, "storage_object_not_found")) return null;
-				throw error;
+			let response: Response | null = null;
+			let size = 0;
+			for await (const item of await storage.readMany({ objectKeys: [key] })) {
+				if (item.state === "not_found") continue;
+				// Consume the payload before advancing so readMany can validate the final frame.
+				const bytes = await new Response(item.body).arrayBuffer();
+				size = bytes.byteLength;
+				response = new Response(bytes, {
+					headers: { "content-type": item.contentType, etag: item.etag },
+				});
 			}
-			const response = await fetch(
-				new Request(capability.url, {
-					headers: capability.requiredHeaders,
-					redirect: "error",
-					signal: AbortSignal.timeout(30_000),
-				}),
-			);
-			if (response.status === 404) return null;
-			if (!response.ok || !response.body) throw new Error("Private document read failed");
-			const size =
-				capability.expectedContentLength ?? Number(response.headers.get("content-length"));
-			const metadata = objectMetadata(
-				key,
-				Number.isSafeInteger(size) && size >= 0 ? size : 0,
-				response.headers,
-			);
+			if (!response) return null;
+			const metadata = objectMetadata(key, size, response.headers);
 			return {
 				...metadata,
 				writeHttpMetadata: (headers) => metadata.writeHttpMetadata(headers),
@@ -163,8 +153,4 @@ async function digest(bytes: Uint8Array): Promise<string> {
 	return [...new Uint8Array(await crypto.subtle.digest("SHA-256", buffer))]
 		.map((byte) => byte.toString(16).padStart(2, "0"))
 		.join("");
-}
-
-function hasCode(error: unknown, code: string): boolean {
-	return error instanceof Error && "code" in error && error.code === code;
 }

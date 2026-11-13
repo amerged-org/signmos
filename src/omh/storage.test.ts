@@ -22,7 +22,7 @@ describe("OMH private document storage", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		boundary.createClient.mockReturnValue({
-			createSignedRead: boundary.read,
+			readMany: boundary.read,
 			upload: boundary.upload,
 			deleteObject: boundary.delete,
 			deleteMany: boundary.delete,
@@ -36,51 +36,58 @@ describe("OMH private document storage", () => {
 
 	afterEach(() => vi.unstubAllGlobals());
 
-	it("fetches authorized private bytes server-side and preserves a streaming response", async () => {
-		const fetchObject = vi.fn().mockResolvedValue(
-			new Response("contract", {
-				headers: { "content-type": "application/pdf", etag: '"version-one"' },
-			}),
-		);
-		vi.stubGlobal("fetch", fetchObject);
-		boundary.read.mockResolvedValue({
-			url: "https://signed-storage.invalid/private-object?signature=secret",
-			requiredHeaders: { "x-object-proof": "proof" },
-			expectedContentLength: 8,
+	it("consumes the gateway stream and terminal frame before exposing the private document", async () => {
+		let terminalSeen = false;
+		boundary.read.mockImplementation(async function* () {
+			yield {
+				state: "found",
+				objectKey: "envelopes/one/source-v1.pdf",
+				contentType: "application/pdf",
+				contentLength: 8,
+				etag: '"version-one"',
+				body: new Response("contract").body,
+			};
+			terminalSeen = true;
 		});
-
-		const bucket = createOmhDocumentsBucket(env);
-		const object = await bucket.get("envelopes/one/source-v1.pdf");
+		const object = await createOmhDocumentsBucket(env).get("envelopes/one/source-v1.pdf");
+		expect(terminalSeen).toBe(true);
 		expect(object?.size).toBe(8);
 		expect(object?.httpMetadata?.contentType).toBe("application/pdf");
+		expect(object?.httpEtag).toBe('"version-one"');
 		expect(object?.body).toBeInstanceOf(ReadableStream);
 		expect(object?.bodyUsed).toBe(false);
 		await expect(object?.text()).resolves.toBe("contract");
 		expect(object?.bodyUsed).toBe(true);
-		expect(boundary.read).toHaveBeenCalledWith("envelopes/one/source-v1.pdf");
-		const request = fetchObject.mock.calls[0]?.[0] as Request;
-		expect(request.headers.get("x-object-proof")).toBe("proof");
-		expect(request.headers.get("authorization")).toBeNull();
-		expect(boundary.createClient).toHaveBeenCalledWith(
-			expect.objectContaining({
-				endpoint: env.OHMYHOST_STORAGE_GATEWAY_URL,
-				key: env.OHMYHOST_STORAGE_KEY,
-				projectId: env.OHMYHOST_PROJECT_ID,
-				environmentId: env.OHMYHOST_ENVIRONMENT_ID,
-			}),
-		);
+		expect(boundary.read).toHaveBeenCalledWith({ objectKeys: ["envelopes/one/source-v1.pdf"] });
 	});
 
-	it("maps an authoritative missing object to null and propagates storage failures", async () => {
+	it("maps a missing object to null and propagates gateway failures", async () => {
+		boundary.read.mockImplementationOnce(async function* () {
+			yield { state: "not_found", objectKey: "missing.pdf" };
+		});
 		const bucket = createOmhDocumentsBucket(env);
-		boundary.read.mockRejectedValueOnce(
-			Object.assign(new Error("missing"), { code: "storage_object_not_found" }),
-		);
 		await expect(bucket.get("missing.pdf")).resolves.toBeNull();
 		boundary.read.mockRejectedValueOnce(
 			Object.assign(new Error("unavailable"), { code: "gateway_unavailable" }),
 		);
-		await expect(bucket.get("contract.pdf")).rejects.toThrow("unavailable");
+		await expect(bucket.get("contract.pdf")).rejects.toMatchObject({ code: "gateway_unavailable" });
+	});
+
+	it("fails if the terminal gateway frame is invalid after the object body", async () => {
+		boundary.read.mockImplementation(async function* () {
+			yield {
+				state: "found",
+				objectKey: "contract.pdf",
+				contentType: "application/pdf",
+				contentLength: 8,
+				etag: '"version-one"',
+				body: new Response("contract").body,
+			};
+			throw Object.assign(new Error("invalid frame"), { code: "gateway_response_invalid" });
+		});
+		await expect(createOmhDocumentsBucket(env).get("contract.pdf")).rejects.toMatchObject({
+			code: "gateway_response_invalid",
+		});
 	});
 
 	it("reuses the exact upload receipt for identical bytes, but cannot reuse it for changed bytes", async () => {

@@ -155,7 +155,7 @@ describe("immutable final document artifacts", () => {
 		objects.set(`envelopes/${envelopeId}/source-v1.pdf`, new TextEncoder().encode("corrupt PDF"));
 		await expect(
 			finalizeCompletedEnvelope(envelopeId, { documentsBucket: bucket }),
-		).rejects.toMatchObject({ code: "INVALID_SOURCE_PDF" });
+		).rejects.toMatchObject({ phase: "pdf_render", reason: "INVALID_SOURCE_PDF" });
 		expect(writtenKeys).toEqual([]);
 		expect(dbState.rows.get(finalDocuments)).toBeUndefined();
 	});

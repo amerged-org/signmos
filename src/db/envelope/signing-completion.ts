@@ -7,6 +7,7 @@ import {
 	toAbsoluteDeliveryUrl,
 } from "./email-delivery";
 import { finalizeCompletedEnvelope, getSigningFinalizationSnapshot } from "./finalization";
+import { FinalizationPhaseError } from "./finalization-diagnostics";
 import {
 	type CompleteSigningRequest,
 	type CompleteSigningResult,
@@ -54,7 +55,10 @@ export class SigningNoAssignedFieldsError extends Error {
 export class SigningFinalizationError extends Error {
 	readonly code = "FINAL_PDF_GENERATION_FAILED";
 	readonly retryable = true;
-	constructor() {
+	constructor(
+		readonly phase?: string,
+		readonly reason?: string,
+	) {
 		super("The signed PDF is not ready. Retry completion to finish the same document.");
 		this.name = "SigningFinalizationError";
 	}
@@ -338,9 +342,11 @@ async function finishEnvelopeArtifact(
 			completion: token ? { token, now: now ?? new Date(), owner, recipientEmail } : undefined,
 		});
 		if (!document) throw new SigningFinalizationError();
-	} catch {
+	} catch (error) {
 		// Recipient values stay durable, but the envelope remains open. An identical
 		// retry resumes artifact creation without replacing the recorded signature.
+		if (error instanceof FinalizationPhaseError)
+			throw new SigningFinalizationError(error.phase, error.reason);
 		throw new SigningFinalizationError();
 	}
 }
