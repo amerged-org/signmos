@@ -20,7 +20,10 @@ import {
 } from "@/db/envelope/table";
 import { getDb } from "@/db/setup";
 import { sha256Hex } from "@/hono/api/envelope-route-helpers";
+import type { MultipartContractRequest } from "./contracts-multipart";
+import { contractInvitationOutbox } from "./contracts-outbox-table";
 import { prepareContractPdf } from "./contracts-pdf";
+import { preparePlaceholderContract } from "./contracts-placeholders";
 import {
 	ContractError,
 	type ContractSummary,
@@ -31,36 +34,49 @@ import {
 export async function createAndSendClaimedContract(input: {
 	recordId: string;
 	email: string;
-	request: CreateContractRequest;
+	request: CreateContractRequest | MultipartContractRequest;
 	documentsBucket: R2Bucket;
 	emailDelivery: EmailDeliveryOptions;
 }): Promise<ContractSummary> {
 	const email = input.email.trim().toLowerCase();
-	if (email === input.request.recipient.email.trim().toLowerCase())
+	const request = input.request;
+	const sourceRecipients =
+		"kind" in request ? request.recipients : [{ ...request.recipient, index: 1 }];
+	if (sourceRecipients.some((recipient) => email === recipient.email.trim().toLowerCase()))
 		throw new ContractError(
 			"EXTERNAL_RECIPIENT_REQUIRED",
-			"Choose the external person who should sign this contract",
+			"Each recipient must differ from the sender",
 		);
-	const prepared = await prepareContractPdf(input.request);
+	const prepared =
+		"kind" in request
+			? await preparePlaceholderContract(request)
+			: await prepareContractPdf(request);
 	const now = new Date();
 	const envelopeId = crypto.randomUUID();
-	const recipientId = crypto.randomUUID();
-	const tokenId = crypto.randomUUID();
-	const token = crypto.randomUUID();
-	const r2Key = `envelopes/${envelopeId}/source-v1.pdf`;
-	const relativeUrl = `/signing-verifications/${token}`;
-	const db = getDb();
-	const fieldRows = prepared.fields.map((field) => ({
-		...field,
+	const recipients = sourceRecipients.map((recipient) => ({
+		...recipient,
 		id: crypto.randomUUID(),
-		envelopeId,
-		recipientId,
-		createdAt: now,
+		tokenId: crypto.randomUUID(),
+		token: crypto.randomUUID(),
 	}));
-	// Ten explicit fields per INSERT stay within the private database's 100 parameters.
+	const r2Key = `envelopes/${envelopeId}/source-v1.pdf`;
+	const db = getDb();
+	const fieldRows = prepared.fields.map((field) => {
+		const { recipient: recipientIndex, ...positionedField } = {
+			recipient: undefined as number | undefined,
+			...field,
+		};
+		const recipientId = recipients.find(
+			(recipient) => recipient.index === (recipientIndex ?? 1),
+		)?.id;
+		if (!recipientId)
+			throw new ContractError("INVALID_FIELDS", "A field references an unknown recipient");
+		return { ...positionedField, id: crypto.randomUUID(), envelopeId, recipientId, createdAt: now };
+	});
+	// Five explicit fields per INSERT stay within the private database's 100 parameters.
 	const fieldWrites = [];
-	for (let offset = 0; offset < fieldRows.length; offset += 10)
-		fieldWrites.push(db.insert(envelopeFields).values(fieldRows.slice(offset, offset + 10)));
+	for (let offset = 0; offset < fieldRows.length; offset += 5)
+		fieldWrites.push(db.insert(envelopeFields).values(fieldRows.slice(offset, offset + 5)));
 	await db.batch([
 		guardStatement(sql`select 1 / case when exists (select 1 from ${agenticCommandRecords}
 			where ${agenticCommandRecords.id} = ${input.recordId} and ${agenticCommandRecords.state} = ${"pending"}
@@ -68,7 +84,7 @@ export async function createAndSendClaimedContract(input: {
 		db.insert(envelopes).values({
 			id: envelopeId,
 			createdBy: email,
-			status: "draft",
+			status: "kind" in request ? "preparing" : "draft",
 			signingMode: "me_and_another_signer",
 			createdAt: now,
 		}),
@@ -84,24 +100,63 @@ export async function createAndSendClaimedContract(input: {
 			uploadedBy: email,
 			uploadedAt: now,
 		}),
-		db.insert(envelopeRecipients).values({
-			id: recipientId,
-			envelopeId,
-			...input.request.recipient,
-			status: "pending",
-			createdAt: now,
-		}),
+		...recipients.map((recipient) =>
+			db.insert(envelopeRecipients).values({
+				id: recipient.id,
+				envelopeId,
+				name: recipient.name,
+				email: recipient.email,
+				status: "pending",
+				createdAt: now,
+			}),
+		),
 		...fieldWrites,
-		db.insert(signerTokens).values({
-			id: tokenId,
-			envelopeId,
-			recipientId,
-			token,
-			// Existing readers recognize this inactive state without accepting an undelivered link.
-			status: "revoked",
-			expiresAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
-			createdAt: now,
-		}),
+		...recipients.map((recipient) =>
+			db.insert(signerTokens).values({
+				id: recipient.tokenId,
+				envelopeId,
+				recipientId: recipient.id,
+				token: recipient.token,
+				status: "revoked",
+				expiresAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+				createdAt: now,
+			}),
+		),
+		...("kind" in request
+			? recipients.map((recipient) => {
+					const verificationUrl = toAbsoluteDeliveryUrl(
+						`/signing-verifications/${recipient.token}`,
+						input.emailDelivery,
+					);
+					const mail = buildPartnerVerificationEmail({
+						email: recipient.email,
+						recipientName: recipient.name,
+						verificationUrl,
+					});
+					return db.insert(contractInvitationOutbox).values({
+						id: crypto.randomUUID(),
+						envelopeId,
+						recipientId: recipient.id,
+						tokenId: recipient.tokenId,
+						status: "prepared",
+						createdAt: now,
+						updatedAt: now,
+						toEmail: mail.to,
+						fromEmail:
+							input.emailDelivery.env?.SIGN_FROM_EMAIL ??
+							input.emailDelivery.env?.RESEND_FROM_EMAIL ??
+							"",
+						replyToEmail:
+							input.emailDelivery.env?.SIGN_REPLY_TO_EMAIL ??
+							input.emailDelivery.env?.RESEND_REPLY_TO_EMAIL ??
+							null,
+						subject: mail.subject,
+						textBody: mail.text,
+						htmlBody: mail.html,
+						verificationUrl,
+					});
+				})
+			: []),
 		db
 			.insert(envelopeArtifactVersions)
 			.values({ id: crypto.randomUUID(), envelopeId, r2Key, createdAt: now }),
@@ -127,20 +182,68 @@ export async function createAndSendClaimedContract(input: {
 	await input.documentsBucket.put(r2Key, prepared.bytes, {
 		httpMetadata: { contentType: "application/pdf" },
 	});
-	await deliverTransactionalEmail(
-		buildPartnerVerificationEmail({
-			email: input.request.recipient.email,
-			recipientName: input.request.recipient.name,
-			verificationUrl: toAbsoluteDeliveryUrl(relativeUrl, input.emailDelivery),
-		}),
-		input.emailDelivery,
-	);
+	if ("kind" in request) {
+		const summary: ContractSummary = {
+			id: envelopeId,
+			title: request.title,
+			status: "queued",
+			createdAt: now.toISOString(),
+			recipients: recipients.map(({ name, email }) => ({ name, email, status: "pending" })),
+			completedAt: null,
+			downloadUrl: null,
+		};
+		const queuedAt = new Date();
+		await db.batch([
+			guardStatement(sql`select ${envelopes.id} from ${envelopes}
+				inner join ${agenticCommandRecords} on ${agenticCommandRecords.documentId} = ${envelopes.id}
+				where ${envelopes.id} = ${envelopeId} and ${agenticCommandRecords.id} = ${input.recordId}
+				for update of ${envelopes}, ${agenticCommandRecords}`),
+			guardStatement(sql`select 1 / case when exists (select 1 from ${envelopes}
+				inner join ${agenticCommandRecords} on ${agenticCommandRecords.documentId} = ${envelopes.id}
+				where ${envelopes.id} = ${envelopeId} and ${envelopes.createdBy} = ${email}
+				and ${envelopes.status} = ${"preparing"} and ${agenticCommandRecords.id} = ${input.recordId}
+				and ${agenticCommandRecords.state} = ${"pending"} and ${noEnvelopeDeletion(envelopeId)}
+				for update of ${envelopes}, ${agenticCommandRecords}) then 1 else 0 end as guard`),
+			db.update(envelopes).set({ status: "queued" }).where(eq(envelopes.id, envelopeId)),
+			db
+				.update(contractInvitationOutbox)
+				.set({ status: "queued", updatedAt: queuedAt })
+				.where(
+					and(
+						eq(contractInvitationOutbox.envelopeId, envelopeId),
+						eq(contractInvitationOutbox.status, "prepared"),
+					),
+				),
+			db
+				.update(agenticCommandRecords)
+				.set({
+					state: "completed",
+					responseStatus: 202,
+					responseBody: JSON.stringify({ data: summary }),
+					documentId: envelopeId,
+					completedAt: queuedAt,
+				})
+				.where(eq(agenticCommandRecords.id, input.recordId)),
+		]);
+		return summary;
+	}
+	for (const recipient of recipients) {
+		const relativeUrl = `/signing-verifications/${recipient.token}`;
+		await deliverTransactionalEmail(
+			buildPartnerVerificationEmail({
+				email: recipient.email,
+				recipientName: recipient.name,
+				verificationUrl: toAbsoluteDeliveryUrl(relativeUrl, input.emailDelivery),
+			}),
+			input.emailDelivery,
+		);
+	}
 	const summary: ContractSummary = {
 		id: envelopeId,
 		title: input.request.title,
 		status: "sent",
 		createdAt: now.toISOString(),
-		recipients: [{ ...input.request.recipient, status: "sent" }],
+		recipients: recipients.map(({ name, email }) => ({ name, email, status: "sent" })),
 		completedAt: null,
 		downloadUrl: null,
 	};
@@ -164,21 +267,30 @@ export async function createAndSendClaimedContract(input: {
 			.update(envelopes)
 			.set({ status: "sent", sentBy: email, sentAt })
 			.where(eq(envelopes.id, envelopeId)),
-		db
-			.update(envelopeRecipients)
-			.set({ status: "sent" })
-			.where(eq(envelopeRecipients.id, recipientId)),
-		db.update(signerTokens).set({ status: "active" }).where(eq(signerTokens.id, tokenId)),
-		db.insert(emailSendRecords).values({
-			id: crypto.randomUUID(),
-			envelopeId,
-			recipientId,
-			tokenId,
-			email: input.request.recipient.email,
-			kind: "partner_verification",
-			fallbackUrl: relativeUrl,
-			sentAt,
-		}),
+		...recipients.map((recipient) =>
+			db
+				.update(envelopeRecipients)
+				.set({ status: "sent" })
+				.where(eq(envelopeRecipients.id, recipient.id)),
+		),
+		...recipients.map((recipient) =>
+			db
+				.update(signerTokens)
+				.set({ status: "active" })
+				.where(eq(signerTokens.id, recipient.tokenId)),
+		),
+		...recipients.map((recipient) =>
+			db.insert(emailSendRecords).values({
+				id: crypto.randomUUID(),
+				envelopeId,
+				recipientId: recipient.id,
+				tokenId: recipient.tokenId,
+				email: recipient.email,
+				kind: "partner_verification",
+				fallbackUrl: `/signing-verifications/${recipient.token}`,
+				sentAt,
+			}),
+		),
 		db.insert(auditEvents).values([
 			{
 				id: crypto.randomUUID(),
@@ -196,14 +308,14 @@ export async function createAndSendClaimedContract(input: {
 				message: email,
 				createdAt: sentAt,
 			},
-			{
+			...recipients.map((recipient) => ({
 				id: crypto.randomUUID(),
 				envelopeId,
-				recipientId,
+				recipientId: recipient.id,
 				eventType: "partner.verification.sent",
-				message: input.request.recipient.email,
+				message: recipient.email,
 				createdAt: sentAt,
-			},
+			})),
 		]),
 		db
 			.update(agenticCommandRecords)

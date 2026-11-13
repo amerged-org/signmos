@@ -31,6 +31,8 @@ function defaultValue(property: string): unknown {
 	if (property === "id") return crypto.randomUUID();
 	if (property === "signingMode") return "me_and_another_signer";
 	if (property === "version") return 1;
+	if (property === "required") return true;
+	if (property === "isPlaceholder") return false;
 	if (property === "originalFilename") return "document.pdf";
 	if (property.endsWith("At")) return new Date("2026-05-20T08:00:00.000Z");
 	return null;
@@ -305,6 +307,10 @@ export function wrapSigningTestDb<Database extends object>(
 		matches(statement: string): boolean;
 		run(params: unknown[]): Row[] | Promise<Row[]>;
 	}> = [
+		{
+			matches: (statement) => statement.startsWith("delete from contract_invitation_outbox"),
+			run: () => [],
+		},
 		{
 			matches: (statement) => statement.includes("signing-delete-intent"),
 			run: recordDeletionIntent,

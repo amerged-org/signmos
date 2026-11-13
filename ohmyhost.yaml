@@ -26,6 +26,9 @@ auth:
   provider: none
 mail:
   enabled: true
+functions:
+  crons:
+    - "*/5 * * * *"
 storage:
   provider: r2
   jurisdiction: eu

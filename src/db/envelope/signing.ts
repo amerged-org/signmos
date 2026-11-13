@@ -198,6 +198,10 @@ export async function getSignerSession(
 		fields: fields.map((field) => ({
 			id: field.id,
 			type: field.type,
+			name: field.name,
+			label: field.label,
+			required: field.required,
+			isPlaceholder: field.isPlaceholder,
 			page: field.page,
 			x: field.x,
 			y: field.y,
@@ -209,6 +213,10 @@ export async function getSignerSession(
 			recipientId: field.recipientId,
 			recipientName: recipientNames.get(field.recipientId) ?? "Signer",
 			type: field.type,
+			name: field.name,
+			label: field.label,
+			required: field.required,
+			isPlaceholder: field.isPlaceholder,
 			page: field.page,
 			x: field.x,
 			y: field.y,
@@ -264,6 +272,10 @@ export async function updateSignerFieldPlacement(
 	return {
 		id: nextField.id,
 		type: nextField.type,
+		name: nextField.name,
+		label: nextField.label,
+		required: nextField.required,
+		isPlaceholder: nextField.isPlaceholder,
 		page: nextField.page,
 		x: nextField.x,
 		y: nextField.y,
@@ -377,3 +389,4 @@ export {
 	SigningFinalizationError,
 	SigningNoAssignedFieldsError,
 } from "./signing-completion";
+export { SigningFieldValuesError } from "./signing-field-values";

@@ -8,6 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import type { SignerField } from "./signing-document-preview";
+import {
+	editableSigningFields,
+	OptionalSignatures,
+	optionalSignatureFields,
+	SigningFields,
+	type SigningFieldValues,
+} from "./signing-fields";
 
 type SignatureMode = "typed" | "drawn";
 type TypedSignatureFont = "cursive" | "serif" | "sans-serif";
@@ -26,29 +34,20 @@ export type PartnerSignaturePreference = {
 	typedFont: string | null;
 };
 
-export type CompleteSigningPayload =
-	| {
-			signature: {
-				kind: "typed";
-				typedText: string;
-				typedFont: TypedSignatureFont;
-			};
-			rememberSignature: boolean;
-	  }
-	| {
-			signature: {
-				kind: "drawn";
-				label: string;
-				svgPath: string;
-			};
-			rememberSignature: boolean;
-	  };
+export type CompleteSigningPayload = {
+	fieldValues?: SigningFieldValues;
+	rememberSignature?: boolean;
+	signature?:
+		| { kind: "typed"; typedText: string; typedFont: TypedSignatureFont }
+		| { kind: "drawn"; label: string; svgPath: string };
+};
 
 type SignatureFormValues = {
 	mode: SignatureMode;
 	typedText: string;
 	typedFont: TypedSignatureFont;
 	rememberSignature: boolean;
+	fieldValues: SigningFieldValues;
 };
 
 const typedSignatureFonts: Array<{ label: string; value: TypedSignatureFont; className: string }> =
@@ -73,12 +72,20 @@ const typedSignatureFonts: Array<{ label: string; value: TypedSignatureFont; cla
 export function PartnerSignatureForm({
 	initialPreference,
 	disabled,
+	fields,
 	onSubmit,
 }: {
 	initialPreference: PartnerSignaturePreference | null;
 	disabled: boolean;
+	fields?: SignerField[];
 	onSubmit: (payload: CompleteSigningPayload) => Promise<void>;
 }) {
+	const signatureFields = fields?.filter((field) => field.type === "signature");
+	const hasSignature = signatureFields === undefined || signatureFields.length > 0;
+	const signatureRequired =
+		signatureFields === undefined || signatureFields.some((field) => field.required !== false);
+	const editableFields = editableSigningFields(fields ?? []);
+	const optionalSignatures = optionalSignatureFields(fields ?? []);
 	const [drawPoints, setDrawPoints] = useState<DrawPoint[]>([]);
 	const [savedDrawnPath, setSavedDrawnPath] = useState(
 		initialPreference?.kind === "drawn" ? (initialPreference.svgPath ?? "") : "",
@@ -88,13 +95,22 @@ export function PartnerSignatureForm({
 	const form = useForm({
 		defaultValues: signatureFormDefaults(initialPreference),
 		onSubmit: async ({ value }) => {
+			const fieldValues = Object.keys(value.fieldValues).length > 0 ? value.fieldValues : undefined;
+			const includeSignature =
+				signatureRequired ||
+				optionalSignatures.some((field) => value.fieldValues[field.id] === true);
+			if (!hasSignature || !includeSignature) {
+				setValidationError(null);
+				await onSubmit({ ...(fieldValues ? { fieldValues } : {}) });
+				return;
+			}
 			const payload = buildCompleteSigningPayload(value, toSvgPath(drawPoints) || savedDrawnPath);
 			if (!payload.ok) {
 				setValidationError(payload.message);
 				return;
 			}
 			setValidationError(null);
-			await onSubmit(payload.value);
+			await onSubmit({ ...payload.value, ...(fieldValues ? { fieldValues } : {}) });
 		},
 	});
 
@@ -132,134 +148,164 @@ export function PartnerSignatureForm({
 			<form.Subscribe selector={(state) => state.values}>
 				{(values) => {
 					const drawnPath = toSvgPath(drawPoints) || savedDrawnPath;
+					const includeSignature =
+						signatureRequired ||
+						optionalSignatures.some((field) => values.fieldValues[field.id] === true);
 					const fontClassName =
 						typedSignatureFonts.find((font) => font.value === values.typedFont)?.className ??
 						typedSignatureFonts[0].className;
 					return (
 						<>
-							<fieldset className="grid gap-3 sm:grid-cols-2">
-								<legend className="sr-only">Art der Unterschrift</legend>
-								<SignatureMethodButton
-									isActive={values.mode === "typed"}
-									icon={<Type className="size-4" />}
-									title="Eintippen"
-									description="Dein Name wird als Unterschrift dargestellt."
-									onClick={() => {
-										form.setFieldValue("mode", "typed");
-										setValidationError(null);
-									}}
-								/>
-								<SignatureMethodButton
-									isActive={values.mode === "drawn"}
-									icon={<PenLine className="size-4" />}
-									title="Zeichnen"
-									description="Mit Maus oder Touchpad unterschreiben."
-									onClick={() => {
-										form.setFieldValue("mode", "drawn");
-										setValidationError(null);
-									}}
-								/>
-							</fieldset>
-
-							{values.mode === "typed" ? (
-								<div className="grid gap-4 md:grid-cols-[1.5fr_1fr]">
-									<div
-										aria-label="Vorschau deiner Unterschrift"
-										role="img"
-										className={cn(
-											"flex h-32 items-center justify-center rounded-lg border bg-background px-4 text-pretty text-3xl",
-											fontClassName,
-										)}
-									>
-										{values.typedText || "Dein Name"}
-									</div>
-									<div className="grid gap-4">
-										<form.Field name="typedText">
-											{(field) => (
-												<div className="space-y-2">
-													<Label htmlFor="partner-typed-signature-text">
-														Dein vollständiger Name
-													</Label>
-													<Input
-														id="partner-typed-signature-text"
-														value={field.state.value}
-														onBlur={field.handleBlur}
-														onChange={(event) => field.handleChange(event.target.value)}
-														required={values.mode === "typed"}
-													/>
-												</div>
-											)}
-										</form.Field>
-										<form.Field name="typedFont">
-											{(field) => (
-												<div className="space-y-2">
-													<Label htmlFor="partner-signature-font">Schriftstil</Label>
-													<NativeSelect
-														id="partner-signature-font"
-														value={field.state.value}
-														onBlur={field.handleBlur}
-														onChange={(event) =>
-															field.handleChange(event.target.value as TypedSignatureFont)
-														}
-													>
-														{typedSignatureFonts.map((font) => (
-															<option key={font.value} value={font.value}>
-																{font.label}
-															</option>
-														))}
-													</NativeSelect>
-												</div>
-											)}
-										</form.Field>
-									</div>
-								</div>
-							) : (
-								<div className="space-y-3">
-									<svg
-										aria-label="Unterschrift zeichnen"
-										role="img"
-										viewBox="0 0 320 128"
-										className="h-32 w-full touch-none rounded-lg border bg-background"
-										onMouseDown={startDrawing}
-										onMouseMove={continueDrawing}
-										onMouseUp={stopDrawing}
-										onMouseLeave={stopDrawing}
-									>
-										<path
-											d={drawnPath}
-											fill="none"
-											stroke="currentColor"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-											strokeWidth="3"
-											className="text-foreground"
-										/>
-									</svg>
-									<Button type="button" variant="outline" onClick={clearDrawing}>
-										<RotateCcw className="size-4" />
-										Zeichnung löschen
-									</Button>
-								</div>
-							)}
-
-							<div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
-								<form.Field name="rememberSignature">
+							<form.Field name="fieldValues">
+								{(field) => (
+									<SigningFields
+										fields={editableFields}
+										values={field.state.value}
+										onChange={field.handleChange}
+									/>
+								)}
+							</form.Field>
+							{optionalSignatures.length > 0 && (
+								<form.Field name="fieldValues">
 									{(field) => (
-										<label className="flex min-h-9 items-center gap-2 text-sm">
-											<input
-												type="checkbox"
-												checked={field.state.value}
-												onBlur={field.handleBlur}
-												onChange={(event) => field.handleChange(event.target.checked)}
-												className="size-4 rounded border-input"
-											/>
-											<span>Unterschrift für weitere Verträge merken</span>
-										</label>
+										<OptionalSignatures
+											fields={optionalSignatures}
+											values={field.state.value}
+											onChange={field.handleChange}
+										/>
 									)}
 								</form.Field>
+							)}
+							{hasSignature && includeSignature && (
+								<>
+									<fieldset className="grid gap-3 sm:grid-cols-2">
+										<legend className="sr-only">Art der Unterschrift</legend>
+										<SignatureMethodButton
+											isActive={values.mode === "typed"}
+											icon={<Type className="size-4" />}
+											title="Eintippen"
+											description="Dein Name wird als Unterschrift dargestellt."
+											onClick={() => {
+												form.setFieldValue("mode", "typed");
+												setValidationError(null);
+											}}
+										/>
+										<SignatureMethodButton
+											isActive={values.mode === "drawn"}
+											icon={<PenLine className="size-4" />}
+											title="Zeichnen"
+											description="Mit Maus oder Touchpad unterschreiben."
+											onClick={() => {
+												form.setFieldValue("mode", "drawn");
+												setValidationError(null);
+											}}
+										/>
+									</fieldset>
+
+									{values.mode === "typed" ? (
+										<div className="grid gap-4 md:grid-cols-[1.5fr_1fr]">
+											<div
+												aria-label="Vorschau deiner Unterschrift"
+												role="img"
+												className={cn(
+													"flex h-32 items-center justify-center rounded-lg border bg-background px-4 text-pretty text-3xl",
+													fontClassName,
+												)}
+											>
+												{values.typedText || "Dein Name"}
+											</div>
+											<div className="grid gap-4">
+												<form.Field name="typedText">
+													{(field) => (
+														<div className="space-y-2">
+															<Label htmlFor="partner-typed-signature-text">
+																Dein vollständiger Name
+															</Label>
+															<Input
+																id="partner-typed-signature-text"
+																value={field.state.value}
+																onBlur={field.handleBlur}
+																onChange={(event) => field.handleChange(event.target.value)}
+																required={values.mode === "typed"}
+															/>
+														</div>
+													)}
+												</form.Field>
+												<form.Field name="typedFont">
+													{(field) => (
+														<div className="space-y-2">
+															<Label htmlFor="partner-signature-font">Schriftstil</Label>
+															<NativeSelect
+																id="partner-signature-font"
+																value={field.state.value}
+																onBlur={field.handleBlur}
+																onChange={(event) =>
+																	field.handleChange(event.target.value as TypedSignatureFont)
+																}
+															>
+																{typedSignatureFonts.map((font) => (
+																	<option key={font.value} value={font.value}>
+																		{font.label}
+																	</option>
+																))}
+															</NativeSelect>
+														</div>
+													)}
+												</form.Field>
+											</div>
+										</div>
+									) : (
+										<div className="space-y-3">
+											<svg
+												aria-label="Unterschrift zeichnen"
+												role="img"
+												viewBox="0 0 320 128"
+												className="h-32 w-full touch-none rounded-lg border bg-background"
+												onMouseDown={startDrawing}
+												onMouseMove={continueDrawing}
+												onMouseUp={stopDrawing}
+												onMouseLeave={stopDrawing}
+											>
+												<path
+													d={drawnPath}
+													fill="none"
+													stroke="currentColor"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth="3"
+													className="text-foreground"
+												/>
+											</svg>
+											<Button type="button" variant="outline" onClick={clearDrawing}>
+												<RotateCcw className="size-4" />
+												Zeichnung löschen
+											</Button>
+										</div>
+									)}
+								</>
+							)}
+							<div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+								{hasSignature && includeSignature && (
+									<form.Field name="rememberSignature">
+										{(field) => (
+											<label className="flex min-h-9 items-center gap-2 text-sm">
+												<input
+													type="checkbox"
+													checked={field.state.value}
+													onBlur={field.handleBlur}
+													onChange={(event) => field.handleChange(event.target.checked)}
+													className="size-4 rounded border-input"
+												/>
+												<span>Unterschrift für weitere Verträge merken</span>
+											</label>
+										)}
+									</form.Field>
+								)}
 								<Button type="submit" disabled={disabled}>
 									<Check className="size-4" />
-									Jetzt unterschreiben
+									{(hasSignature && includeSignature) || fields?.length === 0
+										? "Jetzt unterschreiben"
+										: "Angaben abschließen"}
 								</Button>
 							</div>
 						</>
@@ -313,6 +359,7 @@ function signatureFormDefaults(preference: PartnerSignaturePreference | null): S
 			typedText: preference.typedText ?? "",
 			typedFont: parseTypedFont(preference.typedFont),
 			rememberSignature: true,
+			fieldValues: {},
 		};
 	}
 	if (preference?.kind === "drawn") {
@@ -321,6 +368,7 @@ function signatureFormDefaults(preference: PartnerSignaturePreference | null): S
 			typedText: "",
 			typedFont: "cursive",
 			rememberSignature: true,
+			fieldValues: {},
 		};
 	}
 	return {
@@ -328,6 +376,7 @@ function signatureFormDefaults(preference: PartnerSignaturePreference | null): S
 		typedText: "",
 		typedFont: "cursive",
 		rememberSignature: false,
+		fieldValues: {},
 	};
 }
 

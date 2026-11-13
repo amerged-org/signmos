@@ -58,6 +58,38 @@ export async function controlEnvelope(
 	options: { documentsBucket?: R2Bucket } = {},
 ): Promise<EnvelopeControlResult> {
 	const envelope = await getRequiredEnvelope(envelopeId);
+	// The object upload is not part of a database transaction. Do not erase a
+	// document while an upload may still be creating its immutable object.
+	if (
+		envelope.status === "preparing" &&
+		(action !== "delete" || Date.now() - envelope.createdAt.getTime() < 10 * 60_000)
+	) {
+		throw new EnvelopeControlError("ENVELOPE_ACTION_BLOCKED", envelope.status, []);
+	}
+	if (envelope.status === "queued" && action === "cancel") {
+		const db = getDb();
+		await signingBatch([
+			signingStatement(sql`select id from envelopes where id = ${envelopeId} for update`),
+			signingStatement(
+				sql`select 1 / case when exists (select 1 from envelopes where id = ${envelopeId} and status in ('queued', 'sent')) then 1 else 0 end as guard`,
+			),
+			signingStatement(
+				sql`update envelopes set status = 'expired' where id = ${envelopeId} and status in ('queued', 'sent')`,
+			),
+			signingStatement(
+				sql`delete from contract_invitation_outbox where envelope_id = ${envelopeId}`,
+			),
+			db
+				.insert(auditEvents)
+				.values({ envelopeId, recipientId: null, eventType: "envelope.canceled", message: actor }),
+		]);
+		return {
+			envelopeId,
+			action,
+			status: "expired",
+			allowedActions: getEnvelopeAllowedActions("expired"),
+		};
+	}
 	if (action === "cancel" || action === "expire") {
 		return expireActiveEnvelope({
 			envelopeId,
@@ -283,6 +315,9 @@ async function deleteEnvelope(input: {
 	});
 	await signingBatch([
 		db.update(envelopes).set({ status: "deleted" }).where(eq(envelopes.id, input.envelopeId)),
+		signingStatement(
+			sql`delete from contract_invitation_outbox where envelope_id = ${input.envelopeId}`,
+		),
 		db.insert(auditEvents).values({
 			envelopeId: input.envelopeId,
 			recipientId: null,
@@ -303,12 +338,13 @@ async function deleteEnvelope(input: {
 async function getRequiredEnvelope(envelopeId: string): Promise<{
 	id: string;
 	status: EnvelopeStatus;
+	createdAt: Date;
 }> {
 	const db = getDb();
 	const [envelope] = await db.select().from(envelopes).where(eq(envelopes.id, envelopeId)).limit(1);
 	if (!envelope) throw new Error("Envelope not found");
 	const parsed = EnvelopeSchema.parse(envelope);
-	return { id: parsed.id, status: parsed.status };
+	return { id: parsed.id, status: parsed.status, createdAt: parsed.createdAt };
 }
 
 async function getTerminalTimestamp(

@@ -8,6 +8,132 @@ import {
 import type { SourceDocument } from "./schema";
 
 describe("renderFinalPdf", () => {
+	it("adds a continuation page for long values placed in small template markers", async () => {
+		const bytes = await renderFinalPdf({
+			envelopeId: "00000000-0000-4000-8000-000000000001",
+			sourceDocument: await sourceDocumentFixture(),
+			sourceBytes: await sourcePdfBytes(),
+			certificateHash: "b".repeat(64),
+			rows: {
+				fields: [
+					{
+						id: "name",
+						name: "name",
+						type: "text",
+						page: 1,
+						x: 50,
+						y: 100,
+						width: 40,
+						height: 10,
+						isPlaceholder: true,
+					},
+					{
+						id: "signature",
+						name: "sign",
+						type: "signature",
+						page: 1,
+						x: 50,
+						y: 130,
+						width: 40,
+						height: 10,
+						isPlaceholder: true,
+					},
+					{
+						id: "drawn",
+						name: "drawn",
+						type: "signature",
+						page: 1,
+						x: 50,
+						y: 160,
+						width: 40,
+						height: 10,
+						isPlaceholder: true,
+					},
+				],
+				values: [
+					{ fieldId: "name", value: "A longer field value that must remain legible" },
+					{ fieldId: "signature", value: "A very long typed signature" },
+					{ fieldId: "drawn", value: "M 64 24 L 68 98 L 195 75" },
+				],
+				events: [],
+			},
+		});
+		expect((await PDFDocument.load(bytes)).getPageCount()).toBe(3);
+		expect(extractSignatureTransform(bytes, "64 24 m").scale).toBeGreaterThan(0.5);
+	});
+
+	it("renders typed names that resemble SVG commands as text", async () => {
+		for (const name of ["Sam", "Val"]) {
+			const bytes = await renderFinalPdf({
+				envelopeId: "00000000-0000-4000-8000-000000000001",
+				sourceDocument: await sourceDocumentFixture(),
+				sourceBytes: await sourcePdfBytes(),
+				certificateHash: "b".repeat(64),
+				rows: {
+					fields: [
+						{ id: "signature", type: "signature", page: 1, x: 30, y: 40, width: 180, height: 52 },
+					],
+					values: [{ fieldId: "signature", value: name }],
+					events: [],
+				},
+			});
+			expect(extractVisibleText(bytes).join("\n")).toContain(name);
+		}
+	});
+
+	it("covers each template marker including empty optional fields and renders Unicode values", async () => {
+		const bytes = await renderFinalPdf({
+			envelopeId: "00000000-0000-4000-8000-000000000001",
+			sourceDocument: await sourceDocumentFixture(),
+			sourceBytes: await sourcePdfBytes(),
+			certificateHash: "b".repeat(64),
+			rows: {
+				fields: [
+					{
+						id: "name",
+						type: "text",
+						page: 1,
+						x: 50,
+						y: 100,
+						width: 100,
+						height: 20,
+						isPlaceholder: true,
+					},
+					{
+						id: "optional",
+						type: "text",
+						page: 1,
+						x: 50,
+						y: 140,
+						width: 100,
+						height: 20,
+						isPlaceholder: true,
+					},
+					{
+						id: "check",
+						type: "checkbox",
+						page: 1,
+						x: 50,
+						y: 180,
+						width: 20,
+						height: 20,
+						isPlaceholder: true,
+					},
+				],
+				values: [
+					{ fieldId: "name", value: "Jörg Müller" },
+					{ fieldId: "check", value: "true" },
+				],
+				events: [],
+			},
+		});
+		const streams = extractInflatedStreams(bytes).join("\n");
+		expect([...streams.matchAll(/1 1 1 rg/g)]).toHaveLength(3);
+		expect(Buffer.from(bytes).toString("latin1")).toContain("NotoSans");
+		// A checked box draws a frame and two crossing strokes.
+		expect([...streams.matchAll(/\nS\n/g)].length).toBeGreaterThanOrEqual(3);
+	});
+
 	it("renders signature values in a restrained branded signing stamp", async () => {
 		// Stamp design assumptions:
 		// - Only signature fields receive the branded stamp; date fields remain compact values.

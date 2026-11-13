@@ -150,6 +150,28 @@ describe("amerged Sign administrator boundary", () => {
 		if (!auth.ok) expect(auth.response.status).toBe(503);
 	});
 
+	it("combines the existing and supplemental administrator allowlists", () => {
+		const combined = {
+			SIGN_ADMIN_EMAILS: "existing@example.com",
+			SIGN_EXTRA_ADMIN_EMAILS: "  New@Example.com , second@example.com ",
+		};
+		expect(isAllowedAdmin("existing@example.com", combined)).toBe(true);
+		expect(isAllowedAdmin(" new@example.com ", combined)).toBe(true);
+		expect(isAllowedAdmin("second@example.com", combined)).toBe(true);
+		expect(isAllowedAdmin("unknown@example.com", combined)).toBe(false);
+		expect(adminAuthConfigured({ SIGN_EXTRA_ADMIN_EMAILS: " new@example.com " })).toBe(true);
+		expect(adminAuthConfigured({ SIGN_EXTRA_ADMIN_EMAILS: "invalid," })).toBe(false);
+	});
+
+	it("publishes only the OpenAPI read without administrator access", async () => {
+		const openapi = await authorizeHostedRequest(request("/openapi.json"), {});
+		expect("request" in openapi).toBe(true);
+		const mutation = await authorizeHostedRequest(request("/openapi.json", { method: "POST" }), {});
+		expect("response" in mutation && mutation.response.status).toBe(303);
+		const other = await authorizeHostedRequest(request("/agent.md"), {});
+		expect("response" in other && other.response.status).toBe(303);
+	});
+
 	it("accepts only current allowlisted sessions and active allowlisted API tokens", async () => {
 		const cookie = `signmos_history_session=${rawSession}`;
 		expect(

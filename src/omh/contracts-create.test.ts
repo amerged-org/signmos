@@ -101,37 +101,54 @@ describe("bounded contract creation through private OMH adapters", () => {
 				return batch.map((query) => result(query.text.startsWith("select") ? [{ guard: 1 }] : []));
 			},
 		};
-		const storageEnv: OmhStorageEnv = {
-			OHMYHOST_STORAGE_GATEWAY: {
-				fetch: async (request) => {
-					physicalCalls++;
-					const path = new URL(request.url).pathname;
-					if (path === "/v1/uploads/complete")
-						return Response.json({
-							state: storagePending ? "pending" : "completed",
-							transfer_id: transferId,
-						});
-					const body = (await request.json()) as { objectKey: string; contentLength: number };
-					return Response.json({
-						state: "ready",
-						transfer_id: transferId,
-						capability: {
-							operation: "PUT",
-							objectKey: body.objectKey,
-							url: "https://upload.example.com/contract",
-							expiresAt: new Date(Date.now() + 60_000).toISOString(),
-							expectedContentLength: body.contentLength,
-							requiredHeaders: { "content-type": "application/pdf" },
-						},
-					});
+		const storageFetch = async (request: Request) => {
+			physicalCalls++;
+			const path = new URL(request.url).pathname;
+			if (path === "/v1/uploads/complete")
+				return Response.json({
+					state: storagePending ? "pending" : "completed",
+					transfer_id: transferId,
+				});
+			const body = (await request.json()) as { objectKey: string; contentLength: number };
+			return Response.json({
+				state: "ready",
+				transfer_id: transferId,
+				capability: {
+					operation: "PUT",
+					objectKey: body.objectKey,
+					url: "https://upload.example.com/contract",
+					expiresAt: new Date(Date.now() + 60_000).toISOString(),
+					expectedContentLength: body.contentLength,
+					requiredHeaders: { "content-type": "application/pdf" },
 				},
-			},
+			});
+		};
+		const storageEnv: OmhStorageEnv = {
 			OHMYHOST_STORAGE_GATEWAY_URL: "https://private-storage.example.com",
 			OHMYHOST_STORAGE_KEY: "s".repeat(43),
 			OHMYHOST_PROJECT_ID: projectId,
 			OHMYHOST_ENVIRONMENT_ID: transferId,
 		};
+		const mailFetch = async (request: Request) => {
+			physicalCalls++;
+			expect(batches).toHaveLength(1);
+			expect(
+				batches[0]?.some(
+					(query) => query.text.includes('"signer_tokens"') && query.values.includes("revoked"),
+				),
+			).toBe(true);
+			deliveredKey = request.headers.get("idempotency-key");
+			return Response.json(
+				mailUncertain
+					? { state: "uncertain", request_id: transferId }
+					: { state: "accepted", request_id: transferId, message_id: "message-1" },
+				{ status: 202 },
+			);
+		};
 		vi.stubGlobal("fetch", async (request: Request) => {
+			const host = new URL(request.url).hostname;
+			if (host === "private-storage.example.com") return storageFetch(request);
+			if (host === "private-mail.example.com") return mailFetch(request);
 			physicalCalls++;
 			expect(request.method).toBe("PUT");
 			return new Response(null, { status: 200 });
@@ -145,24 +162,6 @@ describe("bounded contract creation through private OMH adapters", () => {
 			SIGN_REPLY_TO_EMAIL: owner,
 			OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.com",
 			OHMYHOST_MAIL_KEY: "m".repeat(43),
-			OHMYHOST_MAIL_GATEWAY: {
-				fetch: async (request: Request) => {
-					physicalCalls++;
-					expect(batches).toHaveLength(1);
-					expect(
-						batches[0]?.some(
-							(query) => query.text.includes('"signer_tokens"') && query.values.includes("revoked"),
-						),
-					).toBe(true);
-					deliveredKey = request.headers.get("idempotency-key");
-					return Response.json(
-						mailUncertain
-							? { state: "uncertain", request_id: transferId }
-							: { state: "accepted", request_id: transferId, message_id: "message-1" },
-						{ status: 202 },
-					);
-				},
-			},
 			DOCUMENTS_BUCKET: createOmhDocumentsBucket(storageEnv),
 		} as unknown as Env;
 		const pdf = await PDFDocument.create();
@@ -245,6 +244,56 @@ describe("bounded contract creation through private OMH adapters", () => {
 				query.text.startsWith('update "agentic_command_records"'),
 			);
 			expect(receipt?.values).toContain(JSON.stringify(body));
+		}
+	});
+
+	it("queues a three-recipient multipart request within the ten-subrequest budget", async () => {
+		const pdf = await PDFDocument.create();
+		const page = pdf.addPage([612, 792]);
+		for (let index = 1; index <= 3; index++)
+			page.drawText(`{{${index}.name}}`, { x: 72, y: 750 - index * 100 });
+		const form = new FormData();
+		form.set(
+			"pdf",
+			new Blob([Uint8Array.from(await pdf.save()).buffer], { type: "application/pdf" }),
+			"agreement.pdf",
+		);
+		form.set(
+			"definition",
+			JSON.stringify({
+				title: "Three recipients",
+				recipients: [1, 2, 3].map((index) => ({
+					index,
+					name: `Person ${index}`,
+					email: `person${index}@example.com`,
+				})),
+				fields: [1, 2, 3].map((recipient) => ({
+					recipient,
+					name: "name",
+					type: "text",
+					label: "Name",
+					required: true,
+				})),
+			}),
+		);
+		const response = await withAdminRequestScope(() =>
+			withDatabase(env, async () => {
+				const request = new Request("https://sign.example.com/api/contracts", {
+					method: "POST",
+					headers: { authorization: `Bearer ${token}`, "idempotency-key": "multipart-budget" },
+					body: form,
+				});
+				const gate = await authorizeHostedRequest(request, env);
+				return "response" in gate ? gate.response : app.fetch(gate.request, env);
+			}),
+		);
+		expect(response.status).toBe(202);
+		expect(physicalCalls).toBeLessThanOrEqual(10);
+		expect(deliveredKey).toBeNull();
+		expect(batches).toHaveLength(2);
+		for (const batch of batches) {
+			expect(batch.length).toBeLessThanOrEqual(25);
+			for (const query of batch) expect(query.values.length).toBeLessThanOrEqual(100);
 		}
 	});
 

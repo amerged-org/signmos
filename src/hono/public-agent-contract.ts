@@ -35,6 +35,7 @@ import { buildAgentGuidance } from "./public-agent-guidance";
 import { buildAgentPartnerPaths } from "./public-agent-partner-contract";
 import { agentRateLimitErrorResponse } from "./public-agent-rate-limit-contract";
 import { buildAgentTwoPartyPaths } from "./public-agent-two-party-contract";
+import { buildContractsPaths } from "./public-contracts-api";
 
 export const publicAgentContractHono = createHono();
 
@@ -71,6 +72,7 @@ function buildAgentOpenApiDocument() {
 			description: "Bearer-authenticated personal document automation for Signmos.",
 		},
 		paths: {
+			...buildContractsPaths(),
 			[agentHumanReviewOperations.commandStatus.publicPath]: {
 				get: {
 					...jsonOperation({

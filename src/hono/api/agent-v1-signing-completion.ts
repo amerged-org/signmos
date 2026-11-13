@@ -15,6 +15,7 @@ import {
 	type EmailDeliveryOptions,
 	type SignerToken,
 	SigningCompletionBlockedError,
+	SigningFieldValuesError,
 	SigningFinalizationError,
 	SigningNoAssignedFieldsError,
 } from "@/db/envelope";
@@ -96,6 +97,18 @@ function completionEventType(target: AgentCompletionTarget) {
 }
 
 function handleAgentCompletionError(documentId: string, error: unknown): Response {
+	if (error instanceof SigningFieldValuesError) {
+		return knownErrorResponse(
+			400,
+			agentError({
+				code: "INVALID_SIGNING_COMPLETION",
+				message: error.message,
+				retryable: false,
+				allowedActions: ["get_document_status"],
+				recoveryUrl: `/api/v1/documents/${documentId}/signing-task`,
+			}),
+		);
+	}
 	if (error instanceof SigningFinalizationError) {
 		return knownErrorResponse(
 			503,

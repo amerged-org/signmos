@@ -26,6 +26,7 @@ import {
 	signingBatch,
 	signingStatement,
 } from "./signing-batch";
+import { resolveSigningFieldValues } from "./signing-field-values";
 import {
 	auditEvents,
 	emailSendRecords,
@@ -77,7 +78,8 @@ export async function completeSigning(
 	} = {},
 ): Promise<CompleteSigningResult> {
 	const db = getDb();
-	const signature = normalizeSigningSignature(input);
+	const signature =
+		input.signature || input.signatureName ? normalizeSigningSignature(input) : undefined;
 	const signingDate = formatSigningDate(options.now ?? new Date());
 	const context = options.context ?? (await getSigningCompletionContext(token));
 	const parsedEnvelope = context.envelope;
@@ -87,13 +89,19 @@ export async function completeSigning(
 		(field) => field.envelopeId === token.envelopeId && field.recipientId === token.recipientId,
 	);
 	if (fields.length === 0) throw new SigningNoAssignedFieldsError();
+	const resolvedValues = resolveSigningFieldValues(
+		fields,
+		input,
+		signature?.fieldValue,
+		signingDate,
+	);
 	const recipients = context.recipients;
 	const signingRecipient = recipients.find((recipient) => recipient.id === token.recipientId);
 	if (!signingRecipient) throw new SigningCompletionBlockedError("sent");
 	if (signingRecipient.status === "completed")
 		return resumeRecordedSigning(
 			token,
-			signature.fieldValue,
+			resolvedValues,
 			fields,
 			recipients,
 			context.saved,
@@ -138,7 +146,7 @@ export async function completeSigning(
 				envelopeId: token.envelopeId,
 				recipientId: token.recipientId,
 				fieldId: field.id,
-				value: field.type === "signature" ? signature.fieldValue : signingDate,
+				value: resolvedValues.get(field.id) ?? "",
 			})),
 		),
 		db.insert(auditEvents).values([
@@ -146,7 +154,7 @@ export async function completeSigning(
 				envelopeId: token.envelopeId,
 				recipientId: token.recipientId,
 				eventType: "field.value.completed",
-				message: signature.auditMessage,
+				message: signature?.auditMessage ?? null,
 			},
 			{
 				envelopeId: token.envelopeId,
@@ -165,7 +173,7 @@ export async function completeSigning(
 				),
 			),
 	];
-	if (input.rememberSignature)
+	if (input.rememberSignature && signature)
 		writes.push(
 			rememberPartnerSignaturePreference({
 				envelopeId: token.envelopeId,
@@ -173,11 +181,6 @@ export async function completeSigning(
 				signature,
 			}),
 		);
-	const envelopeStatus = recipients.every(
-		(recipient) => recipient.id === token.recipientId || recipient.status === "completed",
-	)
-		? "completed"
-		: "sent";
 	if (shouldNotifySender)
 		writes.push(
 			db.insert(emailSendRecords).values({
@@ -189,9 +192,8 @@ export async function completeSigning(
 				fallbackUrl: senderNotificationUrl,
 			}),
 		);
-	await persistSigningCompletion(
+	const envelopeStatus = await persistSigningCompletion(
 		token,
-		envelopeStatus,
 		writes,
 		options.documentsBucket,
 		options.now,
@@ -209,16 +211,17 @@ export async function completeSigning(
 
 async function persistSigningCompletion(
 	token: SignerToken,
-	envelopeStatus: "sent" | "completed",
 	writes: SigningBatchQuery[],
 	documentsBucket: R2Bucket | undefined,
 	now: Date | undefined,
 	owner: string,
 	recipientEmail: string,
-): Promise<void> {
+): Promise<"sent" | "completed"> {
 	try {
-		if (envelopeStatus === "completed") {
-			const snapshot = await getSigningFinalizationSnapshot(token.envelopeId, writes);
+		// Determine completion after recording the recipient while holding the envelope lock.
+		// Two recipients can otherwise both observe the other as pending and never finalize.
+		const snapshot = await getSigningFinalizationSnapshot(token.envelopeId, writes);
+		if (snapshot.recipients.every((recipient) => recipient.status === "completed")) {
 			await finishEnvelopeArtifact(
 				token.envelopeId,
 				documentsBucket,
@@ -228,9 +231,9 @@ async function persistSigningCompletion(
 				owner,
 				recipientEmail,
 			);
-		} else {
-			await signingBatch(writes);
+			return "completed";
 		}
+		return "sent";
 	} catch (error) {
 		if (isSigningGuardFailure(error)) throw new SigningCompletionBlockedError("sent");
 		throw error;
@@ -279,7 +282,7 @@ async function getSigningCompletionContext(token: SignerToken): Promise<SigningC
 
 async function resumeRecordedSigning(
 	token: SignerToken,
-	signatureValue: string,
+	values: Map<string, string>,
 	fields: EnvelopeField[],
 	recipients: Recipient[],
 	saved: Array<Record<string, unknown>>,
@@ -296,7 +299,8 @@ async function resumeRecordedSigning(
 		fields.some(
 			(field) =>
 				!savedByField.has(field.id) ||
-				(field.type === "signature" && savedByField.get(field.id) !== signatureValue),
+				((field.type !== "date" || field.name !== null) &&
+					savedByField.get(field.id) !== values.get(field.id)),
 		)
 	) {
 		throw new SigningCompletionBlockedError("sent");

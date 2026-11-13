@@ -7,7 +7,10 @@ import type { PartnerSignaturePreference } from "./partner-signature-form";
 
 export interface SignerField {
 	id: string;
-	type: "signature" | "date";
+	type: "signature" | "date" | "text" | "checkbox";
+	name?: string | null;
+	label?: string | null;
+	required?: boolean;
 	page: number;
 	x: number;
 	y: number;
@@ -69,6 +72,17 @@ export function SigningDocumentPreview({
 					PDF öffnen
 				</TextLink>
 			</div>
+			<div className="space-y-2">
+				<p className="text-sm text-muted-foreground">
+					Lies den gesamten Vertrag, bevor du unterschreibst.
+				</p>
+				<iframe
+					className="h-[70vh] min-h-[400px] w-full rounded-md border bg-muted"
+					src={`${session.sourceDocument.downloadUrl}#view=FitH`}
+					title="Vollständiger Vertrag"
+				/>
+			</div>
+			<h3 className="font-medium">Deine Felder im Vertrag</h3>
 			<div className="grid gap-4">
 				{pages.map((page, index) => (
 					<fieldset
@@ -136,7 +150,7 @@ function SigningPreviewFieldOverlay({
 	) : (
 		<>
 			<span className="truncate font-medium capitalize">
-				{field.type === "signature" ? "Hier unterschreiben" : "Datum"}
+				{field.type === "signature" ? "Hier unterschreiben" : signerFieldLabel(field)}
 			</span>
 			<span className="truncate">{field.recipientName}</span>
 		</>
@@ -146,7 +160,7 @@ function SigningPreviewFieldOverlay({
 			<>
 				{position.styles}
 				<button
-					aria-label={`${field.recipientName} · ${field.type === "signature" ? "Unterschrift" : "Datum"} · Feld`}
+					aria-label={`${field.recipientName} · ${signerFieldLabel(field)} · Feld`}
 					type="button"
 					className={className}
 					onPointerDown={(event) => onStartDrag(event, field)}
@@ -161,7 +175,7 @@ function SigningPreviewFieldOverlay({
 		<>
 			{position.styles}
 			<div
-				aria-label={`${field.recipientName} · ${field.type === "signature" ? "Unterschrift" : "Datum"} · ${hasValue ? "ausgefüllt" : "Feld"}`}
+				aria-label={`${field.recipientName} · ${signerFieldLabel(field)} · ${hasValue ? "ausgefüllt" : "Feld"}`}
 				role="img"
 				className={className}
 			>
@@ -169,6 +183,14 @@ function SigningPreviewFieldOverlay({
 			</div>
 		</>
 	);
+}
+
+export function signerFieldLabel(field: SignerField): string {
+	if (field.label) return field.label;
+	if (field.name) return field.name;
+	return { signature: "Unterschrift", date: "Datum", text: "Text", checkbox: "Auswahl" }[
+		field.type
+	];
 }
 
 function PreviewFieldValue({ field, value }: { field: SignerPreviewField; value: string }) {
@@ -208,5 +230,7 @@ function pdfPreviewUrl(downloadUrl: string, page: number): string {
 }
 
 function looksLikeSvgPath(value: string): boolean {
-	return /^[MmLlHhVvCcSsQqTtAaZz0-9,.\s-]+$/.test(value.trim());
+	return /^[Mm]\s*-?(?:\d+\.?\d*|\.\d+)[,\s]+-?(?:\d+\.?\d*|\.\d+)(?:[MmLlHhVvCcSsQqTtAaZz0-9,.\s-]*)$/.test(
+		value.trim(),
+	);
 }

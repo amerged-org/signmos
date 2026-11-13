@@ -16,6 +16,7 @@ import {
 import { hashHistoryCredential } from "@/db/history-access/request";
 import { historySessions } from "@/db/history-access/table";
 import { createAdminCsrfToken } from "@/omh/auth";
+import { contractInvitationOutbox } from "@/omh/contracts-outbox-table";
 import contractsEndpoint from "./contracts";
 import {
 	contractRows,
@@ -401,6 +402,112 @@ describe("owner contract API", () => {
 		expect(
 			(await send({ ...payload, recipient: { name: "Owner", email: owner } }, "self")).status,
 		).toBe(400);
+		expect(contractRows(envelopes)).toHaveLength(0);
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+	it("queues multipart placeholders for multiple recipients and replays without duplicate mail", async () => {
+		const pdf = await PDFDocument.create();
+		const page = pdf.addPage([612, 792]);
+		page.drawText("{{1.name}}", { x: 80, y: 700 });
+		page.drawText("{{2.sign}}", { x: 80, y: 600 });
+		const bytes = await pdf.save();
+		const definition = {
+			title: "Multiple people",
+			recipients: [
+				{ index: 1, name: "Ada", email: "ada@example.com" },
+				{ index: 2, name: "Grace", email: "grace@example.com" },
+			],
+			fields: [
+				{ recipient: 1, name: "name", type: "text", label: "Name", required: true },
+				{ recipient: 2, name: "sign", type: "signature", label: "Signature", required: true },
+			],
+		};
+		const submit = () => {
+			const form = new FormData();
+			form.set(
+				"pdf",
+				new Blob([Uint8Array.from(bytes).buffer], { type: "application/pdf" }),
+				"agreement.pdf",
+			);
+			form.set("definition", JSON.stringify(definition));
+			return contractsEndpoint.fetch(
+				new Request(`${baseUrl}/`, {
+					method: "POST",
+					headers: { authorization: `Bearer ${token}`, "idempotency-key": "multi" },
+					body: form,
+				}),
+				env,
+			);
+		};
+		const response = await submit();
+		expect(response.status).toBe(202);
+		const body = (await response.json()) as { data: { id: string; recipients: unknown[] } };
+		expect(body.data.recipients).toHaveLength(2);
+		await expect((await read(`/${body.data.id}`)).json()).resolves.toMatchObject({
+			data: { status: "queued" },
+		});
+		const firstJob = contractRows(contractInvitationOutbox)[0];
+		if (!firstJob) throw new Error("Missing invitation");
+		firstJob.status = "uncertain";
+		await expect((await read(`/${body.data.id}`)).json()).resolves.toMatchObject({
+			data: { status: "delivery_failed" },
+		});
+		firstJob.status = "manual_review";
+		await expect((await read(`/${body.data.id}`)).json()).resolves.toMatchObject({
+			data: { status: "manual_review" },
+		});
+		firstJob.status = "queued";
+		expect(contractRows(envelopeFields)).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "name",
+					type: "text",
+					required: true,
+					isPlaceholder: true,
+				}),
+				expect.objectContaining({
+					name: "sign",
+					type: "signature",
+					required: true,
+					isPlaceholder: true,
+				}),
+			]),
+		);
+		expect(contractRows(signerTokens).map((row) => row.status)).toEqual(["revoked", "revoked"]);
+		expect(fetcher).not.toHaveBeenCalled();
+		const replay = await submit();
+		expect(replay.status).toBe(202);
+		await expect(replay.json()).resolves.toEqual(body);
+		expect(fetcher).not.toHaveBeenCalled();
+	});
+
+	it("rejects unmatched placeholders before queuing or sending", async () => {
+		const pdf = await PDFDocument.create();
+		const page = pdf.addPage([612, 792]);
+		page.drawText("{{1.unmatched}}", { x: 80, y: 700 });
+		const form = new FormData();
+		form.set(
+			"pdf",
+			new Blob([Uint8Array.from(await pdf.save()).buffer], { type: "application/pdf" }),
+			"agreement.pdf",
+		);
+		form.set(
+			"definition",
+			JSON.stringify({
+				title: "Invalid",
+				recipients: [{ index: 1, name: "Ada", email: "ada@example.com" }],
+				fields: [{ recipient: 1, name: "name", type: "text", label: "Name", required: true }],
+			}),
+		);
+		const response = await contractsEndpoint.fetch(
+			new Request(`${baseUrl}/`, {
+				method: "POST",
+				headers: { authorization: `Bearer ${token}`, "idempotency-key": "invalid-placeholder" },
+				body: form,
+			}),
+			env,
+		);
+		expect(response.status).toBe(400);
 		expect(contractRows(envelopes)).toHaveLength(0);
 		expect(fetcher).not.toHaveBeenCalled();
 	});

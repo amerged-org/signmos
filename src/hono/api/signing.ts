@@ -20,6 +20,7 @@ import {
 	SigningCompletionBlockedError,
 	SigningFieldPlacementBlockedError,
 	SigningFieldPlacementNotFoundError,
+	SigningFieldValuesError,
 	SigningFinalizationError,
 	SigningNoAssignedFieldsError,
 	updateSignerFieldPlacement,
@@ -226,7 +227,7 @@ signingEndpoint.post("/:token/complete", async (c) => {
 			{
 				error: {
 					code: "INVALID_SIGNING_COMPLETION",
-					message: "Signature and signing date are required",
+					message: "The signing values are invalid",
 				},
 			},
 			400,
@@ -244,6 +245,9 @@ signingEndpoint.post("/:token/complete", async (c) => {
 			}),
 		});
 	} catch (error) {
+		if (error instanceof SigningFieldValuesError) {
+			return c.json({ error: { code: "INVALID_SIGNING_COMPLETION", message: error.message } }, 400);
+		}
 		if (error instanceof SigningFinalizationError) {
 			return c.json(
 				{

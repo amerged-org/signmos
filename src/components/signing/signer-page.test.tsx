@@ -73,6 +73,9 @@ describe("SignerPage", () => {
 		expect(screen.getByTitle("Vertragsvorschau").getAttribute("src")).toBe(
 			"/api/signing/valid-token/source-pdf#toolbar=0&navpanes=0&scrollbar=0&page=1",
 		);
+		expect(screen.getByTitle("Vollständiger Vertrag").getAttribute("src")).toBe(
+			"/api/signing/valid-token/source-pdf#view=FitH",
+		);
 		fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {
 			target: { value: "Ada Lovelace" },
 		});

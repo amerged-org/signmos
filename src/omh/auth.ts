@@ -6,6 +6,7 @@ export const adminSessionCookie = "signmos_history_session";
 
 export interface AdminAuthEnv {
 	SIGN_ADMIN_EMAILS?: string;
+	SIGN_EXTRA_ADMIN_EMAILS?: string;
 }
 
 export interface AdminPrincipal {
@@ -80,20 +81,19 @@ function authorized(
 	return { ok: true, principal };
 }
 
-export function isAllowedAdmin(email: string, env: AdminAuthEnv): boolean {
-	const normalized = email.trim().toLowerCase();
-	return (
-		Boolean(normalized) &&
-		(env.SIGN_ADMIN_EMAILS ?? "")
-			.split(",")
-			.some((candidate) => candidate.trim().toLowerCase() === normalized)
+function adminEmails(env: AdminAuthEnv): string[] {
+	return [env.SIGN_ADMIN_EMAILS ?? "", env.SIGN_EXTRA_ADMIN_EMAILS ?? ""].flatMap((list) =>
+		list.split(",").map((email) => email.trim().toLowerCase()),
 	);
 }
 
+export function isAllowedAdmin(email: string, env: AdminAuthEnv): boolean {
+	const normalized = email.trim().toLowerCase();
+	return Boolean(normalized) && adminEmails(env).includes(normalized);
+}
+
 export function adminAuthConfigured(env: AdminAuthEnv): boolean {
-	return (env.SIGN_ADMIN_EMAILS ?? "")
-		.split(",")
-		.some((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()));
+	return adminEmails(env).some((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
 }
 
 export function readAdminSessionCookie(request: Request): string {

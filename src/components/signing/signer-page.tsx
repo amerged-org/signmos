@@ -16,6 +16,7 @@ import {
 	type SignerPreviewField,
 	type SignerSession,
 	SigningDocumentPreview,
+	signerFieldLabel,
 } from "./signing-document-preview";
 
 interface CompletedDocumentLink {
@@ -80,7 +81,7 @@ export function SignerPage(props: SignerPageProps) {
 			body: JSON.stringify(payload),
 		});
 		if (response.ok) {
-			setMessage("Vielen Dank. Deine Unterschrift wurde gespeichert.");
+			setMessage("Vielen Dank. Deine Angaben wurden gespeichert.");
 			await refreshSigningState();
 			return;
 		}
@@ -248,9 +249,7 @@ export function SignerPage(props: SignerPageProps) {
 						) : (
 							session.fields.map((field) => (
 								<div key={field.id} className="rounded-lg border bg-muted/30 p-3">
-									<p className="font-medium">
-										{field.type === "signature" ? "Unterschrift" : "Datum"}
-									</p>
+									<p className="font-medium">{signerFieldLabel(field)}</p>
 									<p className="text-muted-foreground text-sm tabular-nums">Seite {field.page}</p>
 								</div>
 							))
@@ -259,6 +258,7 @@ export function SignerPage(props: SignerPageProps) {
 					<PartnerSignatureForm
 						key={session.signaturePreference?.id ?? "new-partner-signature"}
 						initialPreference={session.signaturePreference}
+						fields={session.fields}
 						disabled={changeRequested || session.fields.length === 0}
 						onSubmit={completeSigning}
 					/>

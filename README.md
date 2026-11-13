@@ -1,12 +1,12 @@
 # amerged Sign
 
-Private contract sending and recipient signing, based on the MIT-licensed [Signmos](https://github.com/auditmos/signmos) project. This fork targets ohmyho.st in the EU at `https://sign.amerged.com`.
+Private contract sending and recipient signing, based on the MIT-licensed [Signmos](https://github.com/auditmos/signmos) project. This fork is hosted on ohmyho.st at `https://sign.amerged.com`. The existing hosting project reports the US region; the configured private file jurisdiction is EU. Verify the effective location of each service with the hosting provider rather than treating either setting as a statement about all processing.
 
 ## Workflow
 
 An allowlisted administrator signs in using a single-use email link. The private console uploads a PDF, adds an external recipient and sends the invitation. The recipient verifies their email, reviews the document and signs or declines. Completed PDFs include the captured signature/date and an audit summary. Administrators can view status, download completed PDFs and create or revoke API tokens.
 
-`POST /api/contracts` provides the same send flow to server integrations. It requires a Bearer token and a durable Idempotency-Key. Status and downloads remain owner-authorized. See [API documentation](docs/contracts-api.md).
+`POST /api/contracts` provides the send flow to server integrations. Alongside the existing JSON format, multipart requests accept a PDF and JSON definitions for recipient-specific placeholders, including text, date, checkbox and signature fields. Multipart invitations are processed in the background. Requests require a Bearer token and a durable Idempotency-Key. Status and downloads remain owner-authorized. See [API documentation](docs/contracts-api.md).
 
 ## Hosting and authentication
 
@@ -27,6 +27,8 @@ Supply runtime configuration privately through OMH:
 | Name | Purpose |
 | --- | --- |
 | SIGN_ADMIN_EMAILS | Comma-separated administrator allowlist |
+| SIGN_EXTRA_ADMIN_EMAILS | Additional comma-separated administrator allowlist; does not replace existing administrators |
+| SIGN_EXTRA_ADMIN_EMAILS | Optional additional comma-separated administrators; combined with `SIGN_ADMIN_EMAILS` |
 | SIGN_FROM_EMAIL | Exact verified email sender |
 | SIGN_REPLY_TO_EMAIL | Existing reply mailbox |
 | APP_BASE_URL | Trusted origin for this environment |
@@ -53,7 +55,7 @@ See [database adapter notes](docs/DATABASE_OMH.md), [architecture](ARCHITECTURE.
 
 ## Scope
 
-The convenience API currently sends one PDF to one external signer and can append a dedicated signing page or use explicit field positions. The inherited signing engine remains a pilot and does not implement qualified trust-service signatures. UI and API document the bounded PDF policy needed by the hosting runtime. Original upstream submission evidence remains available in Git history; it is not release evidence for this fork.
+The legacy convenience API sends one PDF to one external signer and can append a dedicated signing page or use explicit field positions. The multipart API supports multiple external recipients and PDF placeholders. The inherited signing engine remains a pilot and does not implement qualified trust-service signatures. UI and API document the bounded PDF policy needed by the hosting runtime. Original upstream submission evidence remains available in Git history; it is not release evidence for this fork.
 
 ## License
 

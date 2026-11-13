@@ -1,7 +1,6 @@
 import { createPrivateStorageClient } from "@ohmyhost/customer-runtime/storage";
 
 export interface OmhStorageEnv {
-	OHMYHOST_STORAGE_GATEWAY: { fetch(request: Request): Promise<Response> };
 	OHMYHOST_STORAGE_GATEWAY_URL: string;
 	OHMYHOST_STORAGE_KEY: string;
 	OHMYHOST_PROJECT_ID: string;
@@ -15,7 +14,7 @@ export function createOmhDocumentsBucket(env: OmhStorageEnv): R2Bucket {
 		key: env.OHMYHOST_STORAGE_KEY,
 		projectId: env.OHMYHOST_PROJECT_ID,
 		environmentId: env.OHMYHOST_ENVIRONMENT_ID,
-		fetch: (request) => env.OHMYHOST_STORAGE_GATEWAY.fetch(request),
+		fetch: (request) => fetch(request),
 		capabilityFetch: (request) => fetch(request),
 	});
 

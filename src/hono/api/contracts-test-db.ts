@@ -8,6 +8,7 @@ import {
 	finalDocuments,
 	sourceDocuments,
 } from "@/db/envelope/table";
+import { contractInvitationOutbox } from "@/omh/contracts-outbox-table";
 
 type Row = Record<string, unknown>;
 const dialect = new PgDialect();
@@ -76,7 +77,18 @@ function projectSelection(table: Table, row: Row, selection?: Record<string, unk
 	const deleting = contractRows(auditEvents).some(
 		(event) => event.envelopeId === row.id && event.eventType === "envelope.deletion_started",
 	);
+	const outbox = contractRows(contractInvitationOutbox).filter(
+		(item) => item.envelopeId === row.id,
+	);
+	const deliveryStatus = outbox.some((item) => item.status === "manual_review")
+		? "manual_review"
+		: outbox.some((item) => item.status === "uncertain")
+			? "delivery_failed"
+			: outbox.some((item) => item.status === "queued" || item.status === "sending")
+				? "queued"
+				: null;
 	const derived: Row = {
+		deliveryStatus,
 		recipients: recipients.map((item) => ({
 			name: item.name,
 			email: item.email,
@@ -210,7 +222,8 @@ function runBatchQuery(query: unknown): Row[] {
 		const envelope = contractRows(envelopes).find((row) => row.id === parameter("envelopes", "id"));
 		valid =
 			valid &&
-			envelope?.status === "draft" &&
+			envelope !== undefined &&
+			envelope.status === parameter("envelopes", "status") &&
 			envelope.createdBy === parameter("envelopes", "created_by") &&
 			command?.documentId === envelope.id;
 	} else valid = valid && command?.documentId === null;

@@ -9,6 +9,7 @@ import {
 	EnvelopeSchema,
 	RecipientSchema,
 } from "./schema";
+import { SigningFieldValuesError } from "./signing-field-values";
 import { auditEvents, envelopeFields, envelopeRecipients, envelopes, fieldValues } from "./table";
 
 export class CreatorSigningBlockedError extends Error {
@@ -59,6 +60,16 @@ export async function completeDraftCreatorSigning(input: {
 		.map((field) => EnvelopeFieldSchema.parse(field))
 		.filter((field) => field.recipientId === creator.id);
 	if (fields.length === 0) throw new CreatorSigningBlockedError("NO_FIELDS");
+	if (
+		fields.some(
+			(field) => field.isPlaceholder || (field.type !== "signature" && field.type !== "date"),
+		)
+	) {
+		throw new SigningFieldValuesError("Creator custom fields require explicit completion");
+	}
+	if (!input.completion.signature && !input.completion.signatureName) {
+		throw new SigningFieldValuesError("Signature is required");
+	}
 	const signature = normalizeSignature(input.completion);
 	const signingDate = formatSigningDate(input.now ?? new Date());
 	await db

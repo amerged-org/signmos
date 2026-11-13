@@ -7,6 +7,7 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { getDb } from "@/db/setup";
+import { contractInvitationOutbox } from "./contracts-outbox-table";
 import type { ContractSummary } from "./contracts-schema";
 
 export async function listContracts(email: string): Promise<ContractSummary[]> {
@@ -73,6 +74,14 @@ const latestFinalKey = sql<string | null>`(select ${finalDocuments.r2Key} from $
 const contractSelection = {
 	id: envelopes.id,
 	status: envelopes.status,
+	deliveryStatus: sql<string | null>`case when exists(select 1 from ${contractInvitationOutbox}
+	 where ${contractInvitationOutbox.envelopeId}=${envelopeReference} and ${contractInvitationOutbox.status}=${"manual_review"})
+	 then 'manual_review' when exists(select 1 from ${contractInvitationOutbox}
+	 where ${contractInvitationOutbox.envelopeId}=${envelopeReference} and (${contractInvitationOutbox.status}=${"uncertain"}
+	 or (${contractInvitationOutbox.status}=${"sending"} and ${contractInvitationOutbox.claimedAt} < now() - interval '10 minutes')))
+	 then 'delivery_failed' when exists(select 1 from ${contractInvitationOutbox}
+	 where ${contractInvitationOutbox.envelopeId}=${envelopeReference} and ${contractInvitationOutbox.status} in (${"queued"}, ${"sending"}))
+	 then 'queued' else null end`,
 	createdAt: envelopes.createdAt,
 	recipients: sql<ContractSummary["recipients"]>`coalesce((select jsonb_agg(jsonb_build_object(
   'name',${envelopeRecipients.name},'email',${envelopeRecipients.email},'status',${envelopeRecipients.status})
@@ -94,6 +103,7 @@ const contractSelection = {
 function toContractSummary(row: {
 	id: string;
 	status: string;
+	deliveryStatus: string | null;
 	createdAt: Date;
 	recipients: ContractSummary["recipients"];
 	sourceFilename: string | null;
@@ -107,7 +117,7 @@ function toContractSummary(row: {
 	return {
 		id: row.id,
 		title: row.title ?? row.sourceFilename?.replace(/\.pdf$/i, "") ?? "Untitled contract",
-		status: row.status,
+		status: row.deliveryStatus ?? row.status,
 		recipients: row.recipients,
 		createdAt: row.createdAt.toISOString(),
 		completedAt,

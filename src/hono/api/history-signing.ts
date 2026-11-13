@@ -17,6 +17,7 @@ import {
 	SigningCompletionBlockedError,
 	SigningFieldPlacementBlockedError,
 	SigningFieldPlacementNotFoundError,
+	SigningFieldValuesError,
 	SigningNoAssignedFieldsError,
 	updateSignerFieldPlacement,
 } from "@/db/envelope";
@@ -168,6 +169,9 @@ historySigningEndpoint.post("/documents/:envelopeId/signing/complete", async (c)
 		});
 		return c.json({ data: result });
 	} catch (error) {
+		if (error instanceof SigningFieldValuesError) {
+			return c.json({ error: { code: "INVALID_SIGNING_COMPLETION", message: error.message } }, 400);
+		}
 		if (error instanceof EmailDeliveryError) return historyEmailDeliveryError(c, error);
 		if (error instanceof SigningCompletionBlockedError) {
 			return c.json(

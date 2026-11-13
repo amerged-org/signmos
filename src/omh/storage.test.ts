@@ -12,7 +12,6 @@ vi.mock("@ohmyhost/customer-runtime/storage", () => ({
 }));
 
 const env: OmhStorageEnv = {
-	OHMYHOST_STORAGE_GATEWAY: { fetch: vi.fn() },
 	OHMYHOST_STORAGE_GATEWAY_URL: "https://private-storage.invalid",
 	OHMYHOST_STORAGE_KEY: "private-key",
 	OHMYHOST_PROJECT_ID: "project",

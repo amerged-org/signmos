@@ -9,6 +9,8 @@ import { resolveAdminRequest } from "@/omh/auth";
 import { getContract, getContractFinalPdf, listContracts } from "@/omh/contracts";
 import { claimContractCommand, contractCommandPrincipal } from "@/omh/contracts-command";
 import { createAndSendClaimedContract } from "@/omh/contracts-create";
+import { type MultipartContractRequest, readMultipartContract } from "@/omh/contracts-multipart";
+import { retryContractInvitations } from "@/omh/contracts-outbox";
 import {
 	ContractError,
 	type CreateContractRequest,
@@ -65,10 +67,44 @@ contractsEndpoint.post("/", async (c) => {
 			emailDelivery: { env, baseUrl: env.APP_BASE_URL?.trim() || new URL(c.req.url).origin },
 		});
 		const body = { data: contract };
-		return c.json(body, 201);
+		return contract.status === "queued" ? c.json(body, 202) : c.json(body, 201);
 	} catch (error) {
 		return completeFailedCommand(claim.recordId, error);
 	}
+});
+
+contractsEndpoint.post("/:id/retry-invitations", async (c) => {
+	const auth = await resolveAdminRequest(c.req.raw, c.env, { allowBearer: true });
+	if (!auth.ok) return auth.response;
+	const id = ContractIdSchema.safeParse(c.req.param("id"));
+	if (!id.success || !(await getContract(auth.principal.email, id.data))) return notFound();
+	const key = c.req.header("idempotency-key")?.trim();
+	if (!key || key.length > 200)
+		return errorResponse(
+			"IDEMPOTENCY_KEY_REQUIRED",
+			"Supply an Idempotency-Key header of at most 200 characters",
+			400,
+		);
+	const principal = await contractCommandPrincipal(auth.principal);
+	const claim = await claimContractCommand({
+		principal,
+		idempotencyKey: key,
+		operation: "contracts.retry-invitations",
+		requestFingerprint: await fingerprintAgentCommand({ id: id.data }),
+	});
+	if (claim.state !== "execute") return commandClaimResponse(claim);
+	const result = await retryContractInvitations(id.data, auth.principal.email);
+	const body = { data: result };
+	await getDb()
+		.update(agenticCommandRecords)
+		.set({
+			state: "completed",
+			responseStatus: 200,
+			responseBody: JSON.stringify(body),
+			completedAt: new Date(),
+		})
+		.where(eq(agenticCommandRecords.id, claim.recordId));
+	return c.json(body, 200);
 });
 
 contractsEndpoint.get("/:id/pdf", async (c) => {
@@ -109,9 +145,11 @@ contractsEndpoint.get("/:id", async (c) => {
 
 async function validatedContractRequest(
 	request: Request,
-): Promise<CreateContractRequest | Response> {
+): Promise<CreateContractRequest | MultipartContractRequest | Response> {
 	let json: unknown;
 	try {
+		if (request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data"))
+			return await readMultipartContract(request);
 		json = await readContractJson(request);
 	} catch (error) {
 		return error instanceof ContractError

@@ -23,29 +23,28 @@ function managedMail(state: "accepted" | "uncertain" = "accepted") {
 		);
 	});
 	const env: OmhMailEnv = {
-		OHMYHOST_MAIL_GATEWAY: { fetch: fetcher } as unknown as Fetcher,
 		OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.test",
 		OHMYHOST_MAIL_KEY: "k".repeat(43),
 		OHMYHOST_PROJECT_ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 		SIGN_FROM_EMAIL: "contracts@example.test",
 		SIGN_REPLY_TO_EMAIL: "reply@example.test",
 	};
+	vi.stubGlobal("fetch", fetcher);
 	return { env, fetcher, requests };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
+});
 
 describe("managed OMH transactional mail", () => {
-	it("sends through the private binding with the complete message and runtime credentials", async () => {
+	it("sends through the injected gateway URL with the complete message and runtime credentials", async () => {
 		const { env, fetcher, requests } = managedMail();
-		const publicFetch = vi
-			.spyOn(globalThis, "fetch")
-			.mockRejectedValue(new Error("Unexpected public request"));
 		await expect(sendOmhMail(env, message)).resolves.toEqual({
 			providerMessage: "synthetic-message-1",
 		});
 		expect(fetcher).toHaveBeenCalledOnce();
-		expect(publicFetch).not.toHaveBeenCalled();
 		const request = requests[0];
 		expect(request).toBeDefined();
 		if (!request) throw new Error("Expected a gateway request");
@@ -73,7 +72,6 @@ describe("managed OMH transactional mail", () => {
 	});
 
 	it.each([
-		"OHMYHOST_MAIL_GATEWAY",
 		"OHMYHOST_MAIL_GATEWAY_URL",
 		"OHMYHOST_MAIL_KEY",
 		"OHMYHOST_PROJECT_ID",

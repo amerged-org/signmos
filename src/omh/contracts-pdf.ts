@@ -66,7 +66,7 @@ async function loadContractPdf(bytes: Uint8Array, fieldCount: number): Promise<P
 	}
 }
 
-function decodePdf(base64: string): Uint8Array {
+export function decodePdf(base64: string): Uint8Array {
 	if (base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
 		throw new ContractError(
 			"INVALID_SOURCE_PDF",

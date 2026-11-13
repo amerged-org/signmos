@@ -8,6 +8,8 @@ import { PDFDocument } from "pdf-lib";
 import { withDatabase } from "@/db/setup";
 import { apiHono } from "@/hono/api";
 import { controlEnvelope } from "./controls";
+import { sendEnvelope } from "./delivery";
+import { addFields, addRecipients } from "./queries";
 import { resolveSignerToken } from "./signing";
 
 const envelopeId = "10000000-0000-4000-8000-000000000001";
@@ -100,20 +102,6 @@ const env = {
 	OHMYHOST_MAIL_KEY: "m".repeat(43),
 	SIGN_FROM_EMAIL: "contracts@mail.example.com",
 	SIGN_REPLY_TO_EMAIL: "owner@example.com",
-	OHMYHOST_MAIL_GATEWAY: {
-		fetch: async () => {
-			calls.mail += 1;
-			await beforeMail?.();
-			return Response.json(
-				{
-					state: "accepted",
-					request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
-					message_id: "fixture-message",
-				},
-				{ status: 202 },
-			);
-		},
-	},
 } as unknown as Env;
 function request(path: string, init: RequestInit = {}) {
 	return withDatabase({ OHMYHOST_DATABASE: binding }, async () =>
@@ -143,7 +131,20 @@ beforeAll(async () => {
 afterAll(async () => {
 	await postgres.close();
 });
+afterEach(() => vi.unstubAllGlobals());
 beforeEach(async () => {
+	vi.stubGlobal("fetch", async () => {
+		calls.mail += 1;
+		await beforeMail?.();
+		return Response.json(
+			{
+				state: "accepted",
+				request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+				message_id: "fixture-message",
+			},
+			{ status: 202 },
+		);
+	});
 	await postgres.exec("TRUNCATE envelopes CASCADE");
 	tombstones = new Set();
 	failErasure = false;
@@ -178,6 +179,69 @@ beforeEach(async () => {
 			[envelopeId, recipientId, type, 600 + index * 55],
 		);
 	resetCalls();
+});
+
+it("keeps queued envelopes immutable and cancellation removes pending invitation secrets", async () => {
+	await postgres.query("UPDATE envelopes SET status='queued' WHERE id=$1", [envelopeId]);
+	await postgres.query(
+		`INSERT INTO contract_invitation_outbox
+		(id,envelope_id,recipient_id,token_id,status,to_email,from_email,subject,text_body,html_body,verification_url)
+		VALUES(gen_random_uuid(),$1,$2,$3,'queued','ada@example.com','owner@example.com','s','t','h','https://sign.example.com/secret')`,
+		[envelopeId, recipientId, tokenId],
+	);
+	await expect(
+		withDatabase({ OHMYHOST_DATABASE: binding }, () =>
+			addRecipients(envelopeId, { recipients: [{ name: "Eve", email: "eve@example.com" }] }),
+		),
+	).rejects.toThrow("Envelope must be draft");
+	await expect(
+		withDatabase({ OHMYHOST_DATABASE: binding }, () =>
+			addFields(envelopeId, {
+				fields: [{ recipientId, type: "text", page: 1, x: 20, y: 20, width: 100, height: 20 }],
+			}),
+		),
+	).rejects.toThrow("Envelope must be draft");
+	await expect(
+		withDatabase({ OHMYHOST_DATABASE: binding }, () =>
+			sendEnvelope(envelopeId, "owner@example.com"),
+		),
+	).rejects.toThrow("Envelope must be draft");
+	await expect(
+		withDatabase({ OHMYHOST_DATABASE: binding }, () =>
+			controlEnvelope(envelopeId, "owner@example.com", "cancel", { documentsBucket: bucket }),
+		),
+	).resolves.toMatchObject({ status: "expired" });
+	expect((await postgres.query("SELECT * FROM contract_invitation_outbox")).rows).toHaveLength(0);
+	expect(
+		(await postgres.query("SELECT status FROM envelopes WHERE id=$1", [envelopeId])).rows,
+	).toEqual([{ status: "expired" }]);
+});
+
+it("allows deleting a failed preparation only after the upload grace period and erases invitation secrets", async () => {
+	await postgres.query("UPDATE envelopes SET status='preparing', created_at=now() WHERE id=$1", [
+		envelopeId,
+	]);
+	await postgres.query(
+		`INSERT INTO contract_invitation_outbox
+		(id,envelope_id,recipient_id,token_id,status,to_email,from_email,subject,text_body,html_body,verification_url)
+		VALUES(gen_random_uuid(),$1,$2,$3,'prepared','ada@example.com','owner@example.com','s','t','h','https://sign.example.com/secret')`,
+		[envelopeId, recipientId, tokenId],
+	);
+	await expect(
+		withDatabase({ OHMYHOST_DATABASE: binding }, () =>
+			controlEnvelope(envelopeId, "owner@example.com", "delete", { documentsBucket: bucket }),
+		),
+	).rejects.toMatchObject({ code: "ENVELOPE_ACTION_BLOCKED" });
+	await postgres.query("UPDATE envelopes SET created_at=now()-interval '11 minutes' WHERE id=$1", [
+		envelopeId,
+	]);
+	await expect(
+		withDatabase({ OHMYHOST_DATABASE: binding }, () =>
+			controlEnvelope(envelopeId, "owner@example.com", "delete", { documentsBucket: bucket }),
+		),
+	).resolves.toMatchObject({ status: "deleted" });
+	expect((await postgres.query("SELECT * FROM contract_invitation_outbox")).rows).toHaveLength(0);
+	expect(objects.has("source/v1.pdf")).toBe(false);
 });
 
 it("keeps the signing context correlated to the exact token across different envelopes", async () => {

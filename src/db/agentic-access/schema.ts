@@ -5,7 +5,6 @@ import {
 	CompleteSigningResultSchema,
 	EnvelopeFieldResponseSchema,
 	EnvelopeStatusSchema,
-	FieldTypeSchema,
 	RecipientResponseSchema,
 	RecipientStatusSchema,
 	SignatureProfileCreateRequestSchema,
@@ -261,7 +260,7 @@ export const AgentSignatureProfileResponseSchema = z.object({
 
 const AgentSelfSignFieldCreateSchema = z.object({
 	recipientId: z.string().uuid().optional(),
-	type: FieldTypeSchema,
+	type: z.enum(["signature", "date"]),
 	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
