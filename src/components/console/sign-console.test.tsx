@@ -35,7 +35,7 @@ describe("amerged Sign private console", () => {
 		);
 		vi.stubGlobal("fetch", fetchMock);
 		renderConsole();
-		await screen.findByText("Anmeldung konnte nicht geprüft werden");
+		await screen.findByText("Anmeldung fehlgeschlagen");
 		expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(["/api/auth/session"]);
 		expect(screen.queryByRole("button", { name: "Vertrag versenden" })).toBeNull();
 	});
@@ -66,10 +66,10 @@ describe("amerged Sign private console", () => {
 		renderConsole();
 		await screen.findByText("Privater Vertrag");
 		fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
-		await screen.findByText("Abmeldung konnte nicht bestätigt werden");
+		await screen.findByText("Abmeldung fehlgeschlagen");
 		expect(screen.queryByText("Privater Vertrag")).toBeNull();
 		expect(screen.queryByRole("tab", { name: "API & Verbindungen" })).toBeNull();
-		expect(screen.getByRole("button", { name: "Abmeldung erneut versuchen" })).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Erneut versuchen" })).toBeTruthy();
 		expect(fetchMock).toHaveBeenCalledWith(
 			"/api/auth/logout",
 			expect.objectContaining({
@@ -101,8 +101,8 @@ describe("amerged Sign private console", () => {
 		);
 		vi.stubGlobal("fetch", fetchMock);
 		const view = renderConsole(<ApiAccess csrfToken="csrf-value" />);
-		await screen.findByText("Deine erste Verbindung beginnt hier.");
-		fireEvent.change(screen.getByLabelText("Name der Verbindung"), {
+		await screen.findByText("Noch keine Schlüssel");
+		fireEvent.change(screen.getByLabelText("Name"), {
 			target: { value: "Vertragsablage" },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "Schlüssel erstellen" }));

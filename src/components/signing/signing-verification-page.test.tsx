@@ -61,7 +61,7 @@ describe("SigningVerificationPage", () => {
 
 		await screen.findByText("Bestätigung nicht möglich");
 		const alert = screen.getByRole("alert");
-		expect(alert.textContent).toContain("Partner verification token has expired");
+		expect(alert.textContent).toContain("Dieser Link ist abgelaufen.");
 		expect(onVerified).not.toHaveBeenCalled();
 	});
 });

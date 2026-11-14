@@ -4,7 +4,7 @@ import { ConsoleLogin } from "@/components/console/console-login";
 export const Route = createFileRoute("/login")({
 	head: () => ({
 		meta: [
-			{ title: "Anmelden · amerged Sign" },
+			{ title: "amerged Sign" },
 			{ name: "robots", content: "noindex, nofollow" },
 			{ name: "referrer", content: "no-referrer" },
 		],

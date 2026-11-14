@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { PageHeader, PageShell } from "@/components/layout/page-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { useLanguage } from "@/lib/i18n";
+import { signingCopy, signingError } from "./signing-copy";
 
 interface SigningVerificationPageProps {
 	token: string;
@@ -12,7 +14,7 @@ interface SigningVerificationPageProps {
 type VerificationState =
 	| { status: "verifying" }
 	| { status: "verified"; signingUrl: string }
-	| { status: "error"; message: string };
+	| { status: "error"; code?: string };
 
 type SigningVerificationSuccess = {
 	data: {
@@ -25,6 +27,7 @@ type SigningVerificationSuccess = {
 type SigningVerificationError = {
 	error: {
 		message: string;
+		code?: string;
 	};
 };
 
@@ -36,6 +39,8 @@ export function SigningVerificationPage({
 	token,
 	onVerified = defaultOnVerified,
 }: SigningVerificationPageProps) {
+	const { language } = useLanguage();
+	const copy = signingCopy[language];
 	const [state, setState] = useState<VerificationState>({ status: "verifying" });
 	const apiUrl = useMemo(() => `/api/signing/verifications/${encodeURIComponent(token)}`, [token]);
 
@@ -47,10 +52,10 @@ export function SigningVerificationPage({
 			const json: unknown = await response.json().catch(() => null);
 			if (cancelled) return;
 			if (!response.ok || !isSigningVerificationSuccess(json)) {
-				const message = isSigningVerificationError(json)
-					? json.error.message
-					: "Dieser Link konnte nicht bestätigt werden.";
-				setState({ status: "error", message });
+				setState({
+					status: "error",
+					code: isSigningVerificationError(json) ? json.error.code : undefined,
+				});
 				return;
 			}
 
@@ -60,8 +65,7 @@ export function SigningVerificationPage({
 		}
 
 		verify().catch(() => {
-			if (!cancelled)
-				setState({ status: "error", message: "Dieser Link konnte nicht bestätigt werden." });
+			if (!cancelled) setState({ status: "error" });
 		});
 
 		return () => {
@@ -71,41 +75,32 @@ export function SigningVerificationPage({
 
 	return (
 		<PageShell width="narrow">
-			<PageHeader title="E-Mail-Adresse bestätigen" lead="Ein sicherer Zugang zu deinem Vertrag." />
-			<div className="border-t border-foreground pt-5">
-				<p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-					<span className="mr-2 text-destructive">01 /</span> Zugang zum Dokument
-				</p>
-			</div>
+			<PageHeader title={copy.verifyTitle} />
 
 			{state.status === "verifying" ? (
 				<Alert>
 					<Loader2 className="size-4 animate-spin" />
-					<AlertTitle>E-Mail-Adresse wird geprüft…</AlertTitle>
-					<AlertDescription>Dein persönlicher Zugang zum Vertrag wird geprüft.</AlertDescription>
+					<AlertTitle>{copy.verifying}</AlertTitle>
 				</Alert>
 			) : null}
 
 			{state.status === "verified" ? (
 				<Alert>
 					<Check className="size-4" />
-					<AlertTitle>E-Mail-Adresse bestätigt</AlertTitle>
-					<AlertDescription>
-						Du kannst den Vertrag jetzt prüfen und unterschreiben.
-					</AlertDescription>
+					<AlertTitle>{copy.verified}</AlertTitle>
 				</Alert>
 			) : null}
 
 			{state.status === "error" ? (
 				<Alert variant="destructive" role="alert">
-					<AlertTitle>Bestätigung nicht möglich</AlertTitle>
-					<AlertDescription>{state.message}</AlertDescription>
+					<AlertTitle>{copy.verifyFailed}</AlertTitle>
+					<AlertDescription>{signingError(language, state.code)}</AlertDescription>
 				</Alert>
 			) : null}
 
 			{state.status === "verified" ? (
 				<Button asChild>
-					<a href={state.signingUrl}>Zum Vertrag</a>
+					<a href={state.signingUrl}>{copy.toContract}</a>
 				</Button>
 			) : null}
 		</PageShell>

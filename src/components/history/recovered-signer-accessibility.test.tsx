@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { SignerPage } from "@/components/signing/signer-page";
 
 const envelopeId = "00000000-0000-4000-8000-000000000040";
@@ -44,30 +44,34 @@ describe("recovered signer accessibility", () => {
 
 		render(<SignerPage historyEnvelopeId={envelopeId} />);
 
-		expect(
-			await screen.findByRole("heading", { name: "Vertrag prüfen und unterschreiben" }),
-		).toBeTruthy();
+		expect(await screen.findByRole("heading", { name: "Vertrag unterschreiben" })).toBeTruthy();
 		expect(screen.getByRole("link", { name: "PDF öffnen" }).getAttribute("href")).toBe(
 			`/api/history/documents/${envelopeId}/signing/source-pdf`,
 		);
 		expect(screen.getByLabelText("Dein vollständiger Name")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Jetzt unterschreiben" })).toBeTruthy();
-		expect(screen.getByLabelText("Gewünschte Änderung")).toBeTruthy();
+		fireEvent.click(screen.getByText("Weitere Optionen"));
+		expect(screen.getByLabelText("Änderung")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Änderung anfragen" })).toBeTruthy();
-		expect(screen.getByLabelText("Grund für die Ablehnung")).toBeTruthy();
+		expect(screen.getByLabelText("Grund")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Ablehnen" })).toBeTruthy();
 		expect(fetchMock).toHaveBeenCalledWith(`/api/history/documents/${envelopeId}/signing`);
 		expect(document.body.textContent).not.toContain("invitation-token");
 	});
 
 	it.each([
-		["expired", "This document expired"],
-		["declined", "This document was declined"],
-		["deleted", "This document was deleted"],
-	])("renders the %s terminal state without signing mutations", async (_state, message) => {
+		["expired", "HISTORY_SIGNING_EXPIRED", "Dieser Link ist abgelaufen."],
+		["declined", "HISTORY_SIGNING_DECLINED", "Abgelehnt."],
+		["deleted", "HISTORY_SIGNING_DELETED", "Dieser Vertrag ist nicht mehr verfügbar."],
+	])("renders the %s terminal state without signing mutations", async (_state, code, message) => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () => new Response(JSON.stringify({ error: { message } }), { status: 410 })),
+			vi.fn(
+				async () =>
+					new Response(JSON.stringify({ error: { code, message: "Server message" } }), {
+						status: 410,
+					}),
+			),
 		);
 		render(<SignerPage historyEnvelopeId={envelopeId} />);
 
@@ -97,7 +101,7 @@ describe("recovered signer accessibility", () => {
 		render(<SignerPage historyEnvelopeId={envelopeId} />);
 
 		expect(await screen.findByText("Vertrag abgeschlossen")).toBeTruthy();
-		expect(screen.getByRole("link", { name: "Unterzeichneten Vertrag ansehen" })).toBeTruthy();
-		expect(screen.getByRole("link", { name: "Unterzeichnete PDF herunterladen" })).toBeTruthy();
+		expect(screen.getByRole("link", { name: "Vertrag ansehen" })).toBeTruthy();
+		expect(screen.getByRole("link", { name: "PDF herunterladen" })).toBeTruthy();
 	});
 });

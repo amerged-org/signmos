@@ -1,5 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useLanguage } from "@/lib/i18n";
+import { signingCopy } from "./signing-copy";
 import { type SignerField, signerFieldLabel } from "./signing-document-preview";
 
 export type SigningFieldValues = Record<string, string | boolean>;
@@ -36,15 +38,17 @@ export function SigningFields({
 	values: SigningFieldValues;
 	onChange: (values: SigningFieldValues) => void;
 }) {
+	const { language } = useLanguage();
+	const copy = signingCopy[language];
 	if (fields.length === 0) return null;
 	return (
 		<fieldset className="grid gap-5">
-			<legend className="mb-4 font-serif text-xl">Deine Angaben</legend>
+			<legend className="mb-4 font-serif text-xl">{copy.yourDetails}</legend>
 			{fields.map((field) => {
 				const id = `signing-field-${field.id}`;
 				const currentValue = values[field.id];
 				const required = field.required !== false;
-				const label = `${signerFieldLabel(field)}${required ? " *" : " (optional)"}`;
+				const label = `${signerFieldLabel(field, language)}${required ? " *" : ` (${copy.optional})`}`;
 				if (field.type === "checkbox") {
 					return (
 						<label
@@ -89,6 +93,8 @@ export function OptionalSignatures({
 	values: SigningFieldValues;
 	onChange: (values: SigningFieldValues) => void;
 }) {
+	const { language } = useLanguage();
+	const copy = signingCopy[language];
 	return fields.map((field) => (
 		<label key={field.id} className="flex min-h-11 items-center gap-3 border-b py-2 text-sm">
 			<input
@@ -97,7 +103,10 @@ export function OptionalSignatures({
 				checked={values[field.id] === true}
 				onChange={(event) => onChange({ ...values, [field.id]: event.target.checked })}
 			/>
-			{signerFieldLabel(field)} hinzufügen (optional)
+			{language === "en"
+				? `${copy.add} ${signerFieldLabel(field, language)}`
+				: `${signerFieldLabel(field, language)} ${copy.add}`}{" "}
+			({copy.optional})
 		</label>
 	));
 }

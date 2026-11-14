@@ -9,11 +9,10 @@ export function ConsoleFooter() {
 	return (
 		<footer className="flex flex-wrap items-center justify-between gap-4 border-t border-foreground pt-5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
 			<span>
-				amerged Sign{" "}
+				amerged Sign
 				<span aria-hidden="true" className="text-destructive">
-					/
-				</span>{" "}
-				Verträge in guten Händen
+					.
+				</span>
 			</span>
 			<a
 				href="https://amerged.com"

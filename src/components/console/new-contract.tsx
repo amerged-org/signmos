@@ -1,16 +1,17 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, FileText, Send, Upload } from "lucide-react";
+import { FileText, Send, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { z } from "zod";
 import {
 	type Contract,
+	consoleErrorMessage,
 	consoleKeys,
 	consoleRequest,
 	contractSchema,
 	mutationHeaders,
 } from "@/components/console/console-api";
-import { Panel, PanelDescription, PanelTitle } from "@/components/patterns/panel";
+import { Panel, PanelTitle } from "@/components/patterns/panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +26,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MAX_SOURCE_PDF_BYTES, MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
+import { useLanguage } from "@/lib/i18n";
+import { consoleCopy } from "./console-copy";
 
 interface NewContractProps {
 	csrfToken: string;
@@ -43,6 +46,8 @@ const maxPdfMegabytes = MAX_SOURCE_PDF_BYTES / 1024 / 1024;
 const maxContractPages = MAX_SOURCE_PDF_PAGES - 1;
 
 export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
+	const { language } = useLanguage();
+	const t = consoleCopy[language];
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const submittedRequest = useRef<{ payload: string; key: string } | null>(null);
@@ -50,7 +55,7 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 	const send = useMutation({
 		gcTime: 0,
 		mutationFn: async (value: ContractValues) => {
-			if (!value.file) throw new Error("Bitte wähle einen PDF-Vertrag aus.");
+			if (!value.file) throw new Error(t.choosePdf);
 			const base64 = await encodePdf(value.file);
 			const payload = JSON.stringify({
 				title: value.title.trim(),
@@ -91,18 +96,10 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 			>
 				<div className="flex flex-wrap items-start justify-between gap-3">
 					<div className="space-y-2">
-						<p className="font-mono text-[10px] uppercase tracking-[0.1em] text-destructive">
-							Neuer Vertrag / 01
-						</p>
-						<PanelTitle className="font-serif text-2xl font-normal">
-							Neuen Vertrag versenden
-						</PanelTitle>
-						<PanelDescription>
-							PDF auswählen. Empfänger eintragen. Unterschrift anfragen.
-						</PanelDescription>
+						<PanelTitle className="font-serif text-2xl font-normal">{t.newContract}</PanelTitle>
 					</div>
 					<Button type="button" variant="ghost" onClick={onCancel}>
-						Abbrechen
+						{t.cancel}
 					</Button>
 				</div>
 				<form.Field
@@ -110,17 +107,17 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 					validators={{
 						onSubmit: ({ value }) =>
 							!value
-								? "Bitte wähle eine PDF-Datei aus."
+								? t.choosePdf
 								: value.size > MAX_SOURCE_PDF_BYTES
-									? `Die PDF-Datei darf höchstens ${maxPdfMegabytes} MB groß sein.`
+									? `${t.tooLarge} ${t.max} ${maxPdfMegabytes} MB.`
 									: !value.name.toLowerCase().endsWith(".pdf")
-										? "Bitte wähle eine PDF-Datei aus."
+										? t.choosePdf
 										: undefined,
 					}}
 				>
 					{(field) => (
 						<div className="space-y-2">
-							<Label htmlFor="contract-pdf">Vertrag als PDF</Label>
+							<Label htmlFor="contract-pdf">{t.pdf}</Label>
 							<div className="relative flex flex-col items-center gap-3 border border-dashed bg-muted/30 px-5 py-8 text-center transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30 hover:bg-muted/60">
 								{field.state.value ? (
 									<FileText aria-hidden="true" className="size-7 text-primary" />
@@ -129,12 +126,12 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 								)}
 								<div>
 									<p className="break-all font-medium text-sm">
-										{field.state.value?.name ?? "PDF auswählen oder hierher ziehen"}
+										{field.state.value?.name ?? t.selectPdf}
 									</p>
 									<p className="mt-1 text-muted-foreground text-xs">
 										{field.state.value
-											? `${(field.state.value.size / 1024 / 1024).toLocaleString("de-DE", { maximumFractionDigits: 1 })} MB · Zum Ändern klicken`
-											: `Eine PDF-Datei, maximal ${maxPdfMegabytes} MB und ${maxContractPages} Seiten`}
+											? `${(field.state.value.size / 1024 / 1024).toLocaleString({ de: "de-DE", en: "en-GB", nl: "nl-NL" }[language], { maximumFractionDigits: 1 })} MB · ${t.changeFile}`
+											: `${t.max} ${maxPdfMegabytes} MB · ${maxContractPages} ${t.pages}`}
 									</p>
 								</div>
 								<input
@@ -163,8 +160,7 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 										: "text-muted-foreground text-xs"
 								}
 							>
-								{field.state.meta.errors.join(" ") ||
-									"Für Unterschrift und Datum wird eine eigene Seite am Ende des Vertrags ergänzt."}
+								{field.state.meta.errors.join(" ") || t.pdfHint}
 							</p>
 						</div>
 					)}
@@ -172,13 +168,12 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 				<form.Field
 					name="title"
 					validators={{
-						onSubmit: ({ value }) =>
-							value.trim() ? undefined : "Bitte gib dem Vertrag einen Titel.",
+						onSubmit: ({ value }) => (value.trim() ? undefined : t.titleRequired),
 					}}
 				>
 					{(field) => (
 						<div className="space-y-2">
-							<Label htmlFor="contract-title">Vertragstitel</Label>
+							<Label htmlFor="contract-title">{t.title}</Label>
 							<Input
 								id="contract-title"
 								name={field.name}
@@ -201,18 +196,17 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 					)}
 				</form.Field>
 				<fieldset className="space-y-4 border-t pt-5">
-					<legend className="px-1 font-medium text-sm">Wer soll unterschreiben?</legend>
+					<legend className="px-1 font-medium text-sm">{t.signer}</legend>
 					<div className="grid gap-4 sm:grid-cols-2">
 						<form.Field
 							name="name"
 							validators={{
-								onSubmit: ({ value }) =>
-									value.trim() ? undefined : "Bitte gib den vollständigen Namen ein.",
+								onSubmit: ({ value }) => (value.trim() ? undefined : t.nameRequired),
 							}}
 						>
 							{(field) => (
 								<div className="space-y-2">
-									<Label htmlFor="recipient-name">Vollständiger Name</Label>
+									<Label htmlFor="recipient-name">{t.fullName}</Label>
 									<Input
 										id="recipient-name"
 										name={field.name}
@@ -239,14 +233,12 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 							name="email"
 							validators={{
 								onSubmit: ({ value }) =>
-									/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
-										? undefined
-										: "Bitte gib eine gültige E-Mail-Adresse ein.",
+									/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) ? undefined : t.invalidEmail,
 							}}
 						>
 							{(field) => (
 								<div className="space-y-2">
-									<Label htmlFor="recipient-email">E-Mail-Adresse</Label>
+									<Label htmlFor="recipient-email">{t.email}</Label>
 									<Input
 										id="recipient-email"
 										name={field.name}
@@ -272,12 +264,8 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 					</div>
 				</fieldset>
 				<div className="flex flex-wrap items-center justify-between gap-4 border-t pt-5">
-					<p className="flex items-center gap-2 text-muted-foreground text-xs">
-						<Check aria-hidden="true" className="size-4" />
-						Persönlicher Link zur Unterschrift per E-Mail.
-					</p>
 					<Button type="submit" size="lg" disabled={send.isPending}>
-						Versand prüfen
+						{t.review}
 						<Send aria-hidden="true" />
 					</Button>
 				</div>
@@ -290,20 +278,18 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 			>
 				<DialogContent showCloseButton={!send.isPending}>
 					<DialogHeader>
-						<DialogTitle>Vertrag zur Unterschrift senden?</DialogTitle>
-						<DialogDescription>
-							Bitte prüfe den Empfänger. Die Einladung wird direkt per E-Mail verschickt.
-						</DialogDescription>
+						<DialogTitle>{t.confirmTitle}</DialogTitle>
+						<DialogDescription>{t.confirmDescription}</DialogDescription>
 					</DialogHeader>
 					<form.Subscribe selector={(state) => state.values}>
 						{(value) => (
 							<dl className="space-y-3 border bg-muted/50 p-4 text-sm">
 								<div>
-									<dt className="text-muted-foreground text-xs">Vertrag</dt>
+									<dt className="text-muted-foreground text-xs">{t.contract}</dt>
 									<dd className="mt-1 break-words font-medium">{value.title}</dd>
 								</div>
 								<div>
-									<dt className="text-muted-foreground text-xs">Empfänger</dt>
+									<dt className="text-muted-foreground text-xs">{t.recipient}</dt>
 									<dd className="mt-1 break-words">
 										{value.name}
 										<br />
@@ -315,18 +301,18 @@ export function NewContract({ csrfToken, onSent, onCancel }: NewContractProps) {
 					</form.Subscribe>
 					{send.isError ? (
 						<Alert variant="destructive">
-							<AlertTitle>Versand nicht abgeschlossen</AlertTitle>
-							<AlertDescription>{send.error.message}</AlertDescription>
+							<AlertTitle>{t.sendError}</AlertTitle>
+							<AlertDescription>{consoleErrorMessage(send.error, language)}</AlertDescription>
 						</Alert>
 					) : null}
 					<DialogFooter>
 						<DialogClose asChild>
 							<Button variant="outline" disabled={send.isPending}>
-								Zurück
+								{t.back}
 							</Button>
 						</DialogClose>
 						<Button disabled={send.isPending} onClick={() => send.mutate(form.state.values)}>
-							{send.isPending ? "Vertrag wird versendet…" : "Jetzt versenden"}
+							{send.isPending ? t.sending : t.sendNow}
 							<Send aria-hidden="true" />
 						</Button>
 					</DialogFooter>

@@ -8,6 +8,8 @@ import { StatusBadge, type StatusTone } from "@/components/patterns/status-badge
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useLanguage } from "@/lib/i18n";
+import { consoleCopy } from "./console-copy";
 
 interface ContractListProps {
 	contracts: Contract[];
@@ -32,9 +34,13 @@ const statuses: Record<string, { label: string; tone: StatusTone }> = {
 };
 
 export function ContractList({ contracts, onNew }: ContractListProps) {
+	const { language } = useLanguage();
+	const t = consoleCopy[language];
 	const [search, setSearch] = useState("");
 	const [status, setStatus] = useState("all");
-	const normalized = search.toLocaleLowerCase("de-DE").trim();
+	const normalized = search
+		.toLocaleLowerCase({ de: "de-DE", en: "en-GB", nl: "nl-NL" }[language])
+		.trim();
 	const visible = contracts.filter(
 		(contract) =>
 			(status === "all" ||
@@ -43,16 +49,16 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 					: contract.status === status)) &&
 			(!normalized ||
 				`${contract.title} ${contract.recipients.map((recipient) => `${recipient.name ?? ""} ${recipient.email}`).join(" ")}`
-					.toLocaleLowerCase("de-DE")
+					.toLocaleLowerCase({ de: "de-DE", en: "en-GB", nl: "nl-NL" }[language])
 					.includes(normalized)),
 	);
 
 	return (
 		<Panel className="space-y-6 rounded-none border-0 border-t border-foreground p-0 pt-6 shadow-none sm:p-0 sm:pt-6">
 			<div className="flex flex-wrap items-center justify-between gap-3">
-				<PanelTitle className="font-serif text-2xl font-normal">Alle Verträge</PanelTitle>
+				<PanelTitle className="font-serif text-2xl font-normal">{t.allContracts}</PanelTitle>
 				<span className="font-mono text-[10px] uppercase tracking-[0.06em] text-muted-foreground tabular-nums">
-					{contracts.length} {contracts.length === 1 ? "Vertrag" : "Verträge"}
+					{contracts.length}
 				</span>
 			</div>
 			{contracts.length ? (
@@ -60,7 +66,7 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 					<div className="flex flex-col gap-3 sm:flex-row">
 						<div className="relative flex-1">
 							<Label htmlFor="contract-search" className="sr-only">
-								Verträge durchsuchen
+								{t.search}
 							</Label>
 							<Search
 								aria-hidden="true"
@@ -70,14 +76,14 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 								id="contract-search"
 								type="search"
 								className="pl-9"
-								placeholder="Vertrag oder Empfänger suchen"
+								placeholder={t.searchHint}
 								value={search}
 								onChange={(event) => setSearch(event.target.value)}
 							/>
 						</div>
 						<div>
 							<Label htmlFor="contract-status" className="sr-only">
-								Nach Status filtern
+								{t.statusFilter}
 							</Label>
 							<NativeSelect
 								id="contract-status"
@@ -85,11 +91,11 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 								onChange={(event) => setStatus(event.target.value)}
 								className="w-full sm:w-48"
 							>
-								<option value="all">Alle Status</option>
-								<option value="open">Offen</option>
-								<option value="completed">Unterzeichnet</option>
-								<option value="declined">Abgelehnt</option>
-								<option value="expired">Abgelaufen</option>
+								<option value="all">{t.allStatuses}</option>
+								<option value="open">{t.open}</option>
+								<option value="completed">{t.signed}</option>
+								<option value="declined">{t.statuses.declined}</option>
+								<option value="expired">{t.statuses.expired}</option>
 							</NativeSelect>
 						</div>
 					</div>
@@ -99,16 +105,16 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 								<thead className="border-y font-mono text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
 									<tr>
 										<th scope="col" className="pr-5 py-3 font-normal">
-											Vertrag
+											{t.contract}
 										</th>
 										<th scope="col" className="px-4 py-3 font-normal">
-											Status
+											{t.status}
 										</th>
 										<th scope="col" className="px-4 py-3 font-normal">
-											Gesendet
+											{t.sentAt}
 										</th>
 										<th scope="col" className="px-5 py-3 sm:px-6">
-											<span className="sr-only">Aktionen</span>
+											<span className="sr-only">{t.actions}</span>
 										</th>
 									</tr>
 								</thead>
@@ -143,17 +149,19 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 													</div>
 												</th>
 												<td className="px-4 py-4">
-													<StatusBadge tone={state.tone}>{state.label}</StatusBadge>
+													<StatusBadge tone={state.tone}>
+														{t.statuses[contract.status as keyof typeof t.statuses] ?? state.label}
+													</StatusBadge>
 												</td>
 												<td className="whitespace-nowrap px-4 py-4 text-muted-foreground text-xs tabular-nums">
-													{formatDate(contract.createdAt)}
+													{formatDate(contract.createdAt, language)}
 												</td>
 												<td className="px-5 py-4 text-right sm:px-6">
 													{contract.status === "completed" ? (
 														<Button asChild variant="outline" size="sm">
 															<a
 																href={`/api/contracts/${encodeURIComponent(contract.id)}/pdf`}
-																aria-label={`Unterzeichneten Vertrag ${contract.title} herunterladen`}
+																aria-label={`${t.download}: ${contract.title}`}
 															>
 																<Download aria-hidden="true" />
 																PDF
@@ -171,8 +179,7 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 						</div>
 					) : (
 						<EmptyState
-							title="Kein passender Vertrag."
-							description="Passe deine Suche oder den Statusfilter an."
+							title={t.noMatch}
 							action={
 								<Button
 									variant="outline"
@@ -181,7 +188,7 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 										setStatus("all");
 									}}
 								>
-									Filter zurücksetzen
+									{t.reset}
 								</Button>
 							}
 						/>
@@ -190,9 +197,8 @@ export function ContractList({ contracts, onNew }: ContractListProps) {
 			) : (
 				<EmptyState
 					icon={FileText}
-					title="Der nächste Abschluss beginnt hier."
-					description="Versende deinen ersten Vertrag. Den Fortschritt bis zur Unterschrift siehst du anschließend an dieser Stelle."
-					action={<Button onClick={onNew}>Ersten Vertrag versenden</Button>}
+					title={t.empty}
+					action={<Button onClick={onNew}>{t.first}</Button>}
 				/>
 			)}
 		</Panel>

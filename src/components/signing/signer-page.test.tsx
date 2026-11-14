@@ -244,7 +244,7 @@ describe("SignerPage", () => {
 		await screen.findByText("Unterschrift");
 		expect(screen.getByLabelText("Dein vollständiger Name")).toHaveProperty("value", "Ada Saved");
 		expect(screen.getByLabelText("Schriftstil")).toHaveProperty("value", "serif");
-		const rememberCheckbox = screen.getByLabelText("Unterschrift für weitere Verträge merken");
+		const rememberCheckbox = screen.getByLabelText("Unterschrift merken");
 		expect(rememberCheckbox).toHaveProperty("checked", true);
 
 		fireEvent.click(screen.getByRole("button", { name: "Zeichnen wählen" }));
@@ -328,7 +328,7 @@ describe("SignerPage", () => {
 		});
 		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
-		await screen.findByText("No signing fields are assigned to this recipient");
+		await screen.findByText("Dir sind keine Felder zugewiesen.");
 	});
 
 	it("submits a change request comment from the signer page", async () => {
@@ -357,12 +357,13 @@ describe("SignerPage", () => {
 		render(<SignerPage token="valid-token" />);
 
 		await screen.findByRole("link", { name: "PDF öffnen" });
-		expect(screen.getByText("Keine Unterschriftsfelder vorhanden")).toBeTruthy();
+		expect(screen.getByText("Keine Felder vorhanden")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Jetzt unterschreiben" })).toHaveProperty(
 			"disabled",
 			true,
 		);
-		fireEvent.change(screen.getByLabelText("Gewünschte Änderung"), {
+		fireEvent.click(screen.getByText("Weitere Optionen"));
+		fireEvent.change(screen.getByLabelText("Änderung"), {
 			target: { value: "Please update the billing address." },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "Änderung anfragen" }));
@@ -376,7 +377,7 @@ describe("SignerPage", () => {
 				body: JSON.stringify({ comment: "Please update the billing address." }),
 			}),
 		);
-		await screen.findByText("Änderungen wurden angefragt.");
+		await screen.findByText("Änderung angefragt.");
 		expect(screen.getByRole("button", { name: "Jetzt unterschreiben" })).toHaveProperty(
 			"disabled",
 			true,
@@ -404,10 +405,10 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		await screen.findByText("Partner email verification is required before signing");
-		expect(
-			screen.getByRole("link", { name: "E-Mail-Adresse bestätigen" }).getAttribute("href"),
-		).toBe("/api/signing/verifications/valid-token");
+		await screen.findByText("Bitte bestätige deine E-Mail-Adresse.");
+		expect(screen.getByRole("link", { name: "E-Mail bestätigen" }).getAttribute("href")).toBe(
+			"/api/signing/verifications/valid-token",
+		);
 	});
 
 	it("shows completed document links when a signing link is already complete", async () => {
@@ -429,12 +430,12 @@ describe("SignerPage", () => {
 		render(<SignerPage token="valid-token" />);
 
 		await screen.findByText("Vertrag abgeschlossen");
-		expect(
-			screen.getByRole("link", { name: "Unterzeichneten Vertrag ansehen" }).getAttribute("href"),
-		).toBe("/completed-documents/90000000-0000-4000-8000-000000000001");
-		expect(
-			screen.getByRole("link", { name: "Unterzeichnete PDF herunterladen" }).getAttribute("href"),
-		).toBe("/api/final-documents/90000000-0000-4000-8000-000000000001/pdf");
+		expect(screen.getByRole("link", { name: "Vertrag ansehen" }).getAttribute("href")).toBe(
+			"/completed-documents/90000000-0000-4000-8000-000000000001",
+		);
+		expect(screen.getByRole("link", { name: "PDF herunterladen" }).getAttribute("href")).toBe(
+			"/api/final-documents/90000000-0000-4000-8000-000000000001/pdf",
+		);
 		expect(screen.queryByRole("button", { name: "Jetzt unterschreiben" })).toBeNull();
 	});
 
@@ -454,7 +455,7 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		await screen.findByText("This signing link is no longer active");
+		await screen.findByText("Dieser Link ist abgelaufen.");
 		expect(screen.queryByRole("button", { name: "Jetzt unterschreiben" })).toBeNull();
 		expect(screen.queryByRole("button", { name: "Änderung anfragen" })).toBeNull();
 	});
@@ -475,7 +476,7 @@ describe("SignerPage", () => {
 
 		render(<SignerPage token="valid-token" />);
 
-		await screen.findByText("This document was deleted by the sender");
+		await screen.findByText("Dieser Vertrag ist nicht mehr verfügbar.");
 		expect(screen.queryByRole("link", { name: "PDF öffnen" })).toBeNull();
 		expect(screen.queryByTitle("Vertragsvorschau")).toBeNull();
 		expect(screen.queryByRole("button", { name: "Jetzt unterschreiben" })).toBeNull();

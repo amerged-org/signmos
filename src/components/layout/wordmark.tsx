@@ -1,3 +1,4 @@
+import { useLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 function WordmarkContent() {
@@ -18,6 +19,7 @@ function WordmarkContent() {
 }
 
 export function Wordmark({ linked = true, className }: { linked?: boolean; className?: string }) {
+	const { language } = useLanguage();
 	if (!linked) {
 		return (
 			<span className={cn("inline-flex items-center gap-2", className)}>
@@ -28,7 +30,11 @@ export function Wordmark({ linked = true, className }: { linked?: boolean; class
 	return (
 		<a
 			href="/"
-			aria-label="amerged Sign Startseite"
+			aria-label={
+				{ de: "amerged Sign Startseite", en: "amerged Sign home", nl: "amerged Sign startpagina" }[
+					language
+				]
+			}
 			className={cn(
 				"inline-flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2",
 				className,

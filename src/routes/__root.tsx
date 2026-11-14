@@ -6,7 +6,9 @@ import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from "@tanst
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type * as React from "react";
 import { DefaultCatchBoundary } from "@/components/default-catch-boundary";
+import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { NotFound } from "@/components/not-found";
+import { LanguageProvider, useLanguage } from "@/lib/i18n";
 import appCss from "@/styles.css?url";
 import { seo } from "@/utils/seo";
 
@@ -27,7 +29,7 @@ export const Route = createRootRouteWithContext<{
 				content: "#ffffff",
 			},
 			...seo({
-				title: "amerged Sign | Verträge digital unterschreiben",
+				title: "amerged Sign",
 				description: "Verträge sicher versenden, unterschreiben und verwalten.",
 				image: "/signmos-og.png",
 			}),
@@ -70,11 +72,23 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="de">
+		<LanguageProvider>
+			<LocalizedDocument>{children}</LocalizedDocument>
+		</LanguageProvider>
+	);
+}
+
+function LocalizedDocument({ children }: { children: React.ReactNode }) {
+	const { language } = useLanguage();
+	return (
+		<html lang={language}>
 			<head>
 				<HeadContent />
 			</head>
 			<body>
+				<div className="mx-auto flex max-w-5xl justify-end px-5 pt-2 sm:px-8">
+					<LanguageSwitcher />
+				</div>
 				{children}
 				{import.meta.env.DEV && <TanStackRouterDevtools position="bottom-right" />}
 				{import.meta.env.DEV && <ReactQueryDevtools buttonPosition="bottom-left" />}

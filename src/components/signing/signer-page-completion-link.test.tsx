@@ -66,12 +66,12 @@ describe("SignerPage completion detail link", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 
 		await screen.findByText("Vertrag abgeschlossen");
-		expect(
-			screen.getByRole("link", { name: "Unterzeichneten Vertrag ansehen" }).getAttribute("href"),
-		).toBe("/completed-documents/self-sign-token");
-		expect(
-			screen.getByRole("link", { name: "Unterzeichnete PDF herunterladen" }).getAttribute("href"),
-		).toBe("/api/final-documents/self-sign-token/pdf");
+		expect(screen.getByRole("link", { name: "Vertrag ansehen" }).getAttribute("href")).toBe(
+			"/completed-documents/self-sign-token",
+		);
+		expect(screen.getByRole("link", { name: "PDF herunterladen" }).getAttribute("href")).toBe(
+			"/api/final-documents/self-sign-token/pdf",
+		);
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
 });

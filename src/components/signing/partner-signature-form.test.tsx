@@ -35,14 +35,14 @@ describe("PartnerSignatureForm", () => {
 
 		expect(screen.getAllByLabelText("Name *")).toHaveLength(1);
 		expect(screen.queryByLabelText("Dein vollständiger Name")).toBeNull();
-		fireEvent.click(screen.getByRole("button", { name: "Angaben abschließen" }));
+		fireEvent.click(screen.getByRole("button", { name: "Abschließen" }));
 		expect(submissions).toHaveLength(0);
 		fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "Ada" } });
 		fireEvent.change(screen.getByLabelText("Datum (optional)"), {
 			target: { value: "2026-11-13" },
 		});
 		fireEvent.click(screen.getByLabelText("Bestätigen *"));
-		fireEvent.click(screen.getByRole("button", { name: "Angaben abschließen" }));
+		fireEvent.click(screen.getByRole("button", { name: "Abschließen" }));
 		await waitFor(() => expect(submissions).toHaveLength(1));
 		expect(submissions[0]).toEqual({
 			fieldValues: { "name-1": "Ada", date: "2026-11-13", accept: true },
@@ -73,7 +73,7 @@ describe("PartnerSignatureForm", () => {
 				}}
 			/>,
 		);
-		fireEvent.click(screen.getByRole("button", { name: "Angaben abschließen" }));
+		fireEvent.click(screen.getByRole("button", { name: "Abschließen" }));
 		await waitFor(() => expect(submissions).toHaveLength(1));
 		expect(submissions[0]).toEqual({});
 		fireEvent.click(screen.getByLabelText("sign hinzufügen (optional)"));
@@ -148,10 +148,7 @@ describe("PartnerSignatureForm", () => {
 
 		expect(screen.getByLabelText("Dein vollständiger Name")).toHaveProperty("value", "Ada Saved");
 		expect(screen.getByLabelText("Schriftstil")).toHaveProperty("value", "serif");
-		expect(screen.getByLabelText("Unterschrift für weitere Verträge merken")).toHaveProperty(
-			"checked",
-			true,
-		);
+		expect(screen.getByLabelText("Unterschrift merken")).toHaveProperty("checked", true);
 
 		fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {
 			target: { value: "Ada Updated" },
@@ -189,10 +186,7 @@ describe("PartnerSignatureForm", () => {
 		expect(
 			screen.getByLabelText("Unterschrift zeichnen").querySelector("path")?.getAttribute("d"),
 		).toBe("M 12 36 L 48 20 L 96 42");
-		expect(screen.getByLabelText("Unterschrift für weitere Verträge merken")).toHaveProperty(
-			"checked",
-			true,
-		);
+		expect(screen.getByLabelText("Unterschrift merken")).toHaveProperty("checked", true);
 
 		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
 

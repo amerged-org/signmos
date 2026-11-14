@@ -7,7 +7,9 @@ import { Panel } from "@/components/patterns/panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { signingCopy } from "./signing-copy";
 import type { SignerField } from "./signing-document-preview";
 import {
 	editableSigningFields,
@@ -80,6 +82,8 @@ export function PartnerSignatureForm({
 	fields?: SignerField[];
 	onSubmit: (payload: CompleteSigningPayload) => Promise<void>;
 }) {
+	const { language } = useLanguage();
+	const copy = signingCopy[language];
 	const signatureFields = fields?.filter((field) => field.type === "signature");
 	const hasSignature = signatureFields === undefined || signatureFields.length > 0;
 	const signatureRequired =
@@ -91,7 +95,7 @@ export function PartnerSignatureForm({
 		initialPreference?.kind === "drawn" ? (initialPreference.svgPath ?? "") : "",
 	);
 	const [isDrawing, setIsDrawing] = useState(false);
-	const [validationError, setValidationError] = useState<string | null>(null);
+	const [validationError, setValidationError] = useState<"enterName" | "drawRequired" | null>(null);
 	const form = useForm({
 		defaultValues: signatureFormDefaults(initialPreference),
 		onSubmit: async ({ value }) => {
@@ -179,18 +183,16 @@ export function PartnerSignatureForm({
 							{hasSignature && includeSignature && (
 								<>
 									<div className="space-y-1">
-										<h3 className="font-serif text-xl font-normal">Deine Unterschrift</h3>
-										<p className="text-sm leading-6 text-muted-foreground">
-											Wähle, wie du unterschreiben möchtest.
-										</p>
+										<h3 className="font-serif text-xl font-normal">{copy.signatureTitle}</h3>
 									</div>
 									<fieldset className="grid gap-3 sm:grid-cols-2">
-										<legend className="sr-only">Art der Unterschrift</legend>
+										<legend className="sr-only">{copy.method}</legend>
 										<SignatureMethodButton
 											isActive={values.mode === "typed"}
 											icon={<Type className="size-4" />}
-											title="Eintippen"
-											description="Dein Name wird als Unterschrift dargestellt."
+											title={copy.type}
+											description={copy.typeHelp}
+											selectLabel={copy.select}
 											onClick={() => {
 												form.setFieldValue("mode", "typed");
 												setValidationError(null);
@@ -199,8 +201,9 @@ export function PartnerSignatureForm({
 										<SignatureMethodButton
 											isActive={values.mode === "drawn"}
 											icon={<PenLine className="size-4" />}
-											title="Zeichnen"
-											description="Mit Maus oder Touchpad unterschreiben."
+											title={copy.draw}
+											description={copy.drawHelp}
+											selectLabel={copy.select}
 											onClick={() => {
 												form.setFieldValue("mode", "drawn");
 												setValidationError(null);
@@ -211,22 +214,20 @@ export function PartnerSignatureForm({
 									{values.mode === "typed" ? (
 										<div className="grid gap-4 md:grid-cols-[1.5fr_1fr]">
 											<div
-												aria-label="Vorschau deiner Unterschrift"
+												aria-label={copy.previewSignature}
 												role="img"
 												className={cn(
 													"flex h-32 items-center justify-center border border-border bg-background px-4 text-pretty text-3xl",
 													fontClassName,
 												)}
 											>
-												{values.typedText || "Dein Name"}
+												{values.typedText || copy.yourName}
 											</div>
 											<div className="grid gap-4">
 												<form.Field name="typedText">
 													{(field) => (
 														<div className="space-y-2">
-															<Label htmlFor="partner-typed-signature-text">
-																Dein vollständiger Name
-															</Label>
+															<Label htmlFor="partner-typed-signature-text">{copy.fullName}</Label>
 															<Input
 																id="partner-typed-signature-text"
 																value={field.state.value}
@@ -240,7 +241,7 @@ export function PartnerSignatureForm({
 												<form.Field name="typedFont">
 													{(field) => (
 														<div className="space-y-2">
-															<Label htmlFor="partner-signature-font">Schriftstil</Label>
+															<Label htmlFor="partner-signature-font">{copy.font}</Label>
 															<NativeSelect
 																id="partner-signature-font"
 																value={field.state.value}
@@ -251,7 +252,11 @@ export function PartnerSignatureForm({
 															>
 																{typedSignatureFonts.map((font) => (
 																	<option key={font.value} value={font.value}>
-																		{font.label}
+																		{font.value === "cursive"
+																			? copy.handwriting
+																			: font.value === "serif"
+																				? copy.classic
+																				: copy.clear}
 																	</option>
 																))}
 															</NativeSelect>
@@ -263,7 +268,7 @@ export function PartnerSignatureForm({
 									) : (
 										<div className="space-y-3">
 											<svg
-												aria-label="Unterschrift zeichnen"
+												aria-label={copy.drawSignature}
 												role="img"
 												viewBox="0 0 320 128"
 												className="h-32 w-full touch-none border border-border bg-background"
@@ -284,7 +289,7 @@ export function PartnerSignatureForm({
 											</svg>
 											<Button type="button" variant="outline" onClick={clearDrawing}>
 												<RotateCcw className="size-4" />
-												Zeichnung löschen
+												{copy.clearDrawing}
 											</Button>
 										</div>
 									)}
@@ -302,7 +307,7 @@ export function PartnerSignatureForm({
 													onChange={(event) => field.handleChange(event.target.checked)}
 													className="size-4 rounded border-input"
 												/>
-												<span>Unterschrift für weitere Verträge merken</span>
+												<span>{copy.remember}</span>
 											</label>
 										)}
 									</form.Field>
@@ -310,8 +315,8 @@ export function PartnerSignatureForm({
 								<Button type="submit" className="w-full" size="lg" disabled={disabled}>
 									<Check className="size-4" />
 									{(hasSignature && includeSignature) || fields?.length === 0
-										? "Jetzt unterschreiben"
-										: "Angaben abschließen"}
+										? copy.signNow
+										: copy.finish}
 								</Button>
 							</div>
 						</>
@@ -319,7 +324,7 @@ export function PartnerSignatureForm({
 				}}
 			</form.Subscribe>
 
-			{validationError ? <p className="text-destructive text-sm">{validationError}</p> : null}
+			{validationError ? <p className="text-destructive text-sm">{copy[validationError]}</p> : null}
 		</Panel>
 	);
 }
@@ -329,19 +334,21 @@ function SignatureMethodButton({
 	icon,
 	title,
 	description,
+	selectLabel,
 	onClick,
 }: {
 	isActive: boolean;
 	icon: ReactNode;
 	title: string;
 	description: string;
+	selectLabel: string;
 	onClick: () => void;
 }) {
 	return (
 		<button
 			type="button"
 			aria-pressed={isActive}
-			aria-label={`${title} wählen`}
+			aria-label={`${title} ${selectLabel}`}
 			onClick={onClick}
 			className={cn(
 				"flex min-h-24 items-start gap-3 border bg-background p-4 text-left transition-colors",
@@ -391,10 +398,12 @@ function signatureFormDefaults(preference: PartnerSignaturePreference | null): S
 function buildCompleteSigningPayload(
 	values: SignatureFormValues,
 	drawnPath: string,
-): { ok: true; value: CompleteSigningPayload } | { ok: false; message: string } {
+):
+	| { ok: true; value: CompleteSigningPayload }
+	| { ok: false; message: "enterName" | "drawRequired" } {
 	if (values.mode === "typed") {
 		const typedText = values.typedText.trim();
-		if (!typedText) return { ok: false, message: "Bitte gib deinen Namen ein." };
+		if (!typedText) return { ok: false, message: "enterName" };
 		return {
 			ok: true,
 			value: {
@@ -407,7 +416,7 @@ function buildCompleteSigningPayload(
 			},
 		};
 	}
-	if (!drawnPath) return { ok: false, message: "Bitte zeichne deine Unterschrift." };
+	if (!drawnPath) return { ok: false, message: "drawRequired" };
 	return {
 		ok: true,
 		value: {

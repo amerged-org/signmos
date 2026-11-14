@@ -15,6 +15,7 @@ import {
 	ConsoleRequestError,
 	type ConsoleSession,
 	type Contract,
+	consoleErrorMessage,
 	consoleRequest,
 	contractsOptions,
 	mutationHeaders,
@@ -28,8 +29,12 @@ import { LoadingText } from "@/components/patterns/loading-text";
 import { Panel } from "@/components/patterns/panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { useLanguage } from "@/lib/i18n";
+import { consoleCopy } from "./console-copy";
 
 export function SignConsole() {
+	const { language } = useLanguage();
+	const t = consoleCopy[language];
 	const session = useQuery(sessionOptions);
 	useEffect(() => {
 		if (session.data && !session.data.authenticated) window.location.replace("/login");
@@ -38,7 +43,7 @@ export function SignConsole() {
 		return (
 			<PageShell width="narrow" center>
 				<ConsoleBrand />
-				<LoadingText boxed>Anmeldung wird geprüft…</LoadingText>
+				<LoadingText boxed>{t.checking}</LoadingText>
 			</PageShell>
 		);
 	if (
@@ -51,13 +56,11 @@ export function SignConsole() {
 			<PageShell width="narrow" center>
 				<ConsoleBrand />
 				<Alert variant="destructive">
-					<AlertTitle>Anmeldung konnte nicht geprüft werden</AlertTitle>
-					<AlertDescription>
-						{session.error?.message ?? "Bitte melde dich erneut an."}
-					</AlertDescription>
+					<AlertTitle>{t.loginError}</AlertTitle>
+					<AlertDescription>{t.loginAgain}</AlertDescription>
 				</Alert>
 				<Button asChild>
-					<a href="/login">Zur Anmeldung</a>
+					<a href="/login">{t.login}</a>
 				</Button>
 			</PageShell>
 		);
@@ -70,6 +73,8 @@ interface AuthenticatedConsoleProps {
 }
 
 function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps) {
+	const { language } = useLanguage();
+	const t = consoleCopy[language];
 	const queryClient = useQueryClient();
 	const [tab, setTab] = useState<"contracts" | "api">("contracts");
 	const [composing, setComposing] = useState(false);
@@ -129,42 +134,34 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 					<Button
 						variant="ghost"
 						size="sm"
-						aria-label="Abmelden"
+						aria-label={t.logout}
 						onClick={() => logout.mutate()}
 						disabled={logout.isPending}
 					>
 						<LogOut aria-hidden="true" />
-						<span className="hidden sm:inline">
-							{logout.isPending ? "Wird abgemeldet…" : "Abmelden"}
-						</span>
-						<span className="sr-only sm:hidden">Abmelden</span>
+						<span className="hidden sm:inline">{logout.isPending ? t.loggingOut : t.logout}</span>
+						<span className="sr-only sm:hidden">{t.logout}</span>
 					</Button>
 				</div>
 			</header>
 			<div className="flex flex-wrap items-end justify-between gap-6 py-5 sm:py-8">
 				<div className="max-w-2xl space-y-4">
 					<p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-						<span className="text-destructive">01 /</span> Dein Arbeitsbereich
+						<span className="text-destructive">01 /</span> {t.workspace}
 					</p>
 					<h1 className="text-balance font-serif text-4xl font-normal leading-[1.1] tracking-[-0.035em] sm:text-5xl">
-						Weniger Papierkram.
-						<br />
-						<em>Mehr Einigung</em>
-						<span className="text-destructive">.</span>
+						{t.heading}
 					</h1>
-					<p className="font-serif text-base leading-7 text-muted-foreground sm:text-lg">
-						Deine Verträge. Vom ersten Versand bis zur letzten Unterschrift.
-					</p>
 				</div>
 				<Button size="lg" onClick={startContract}>
 					<Plus aria-hidden="true" />
-					Vertrag versenden
+					{t.sendContract}
 				</Button>
 			</div>
 			<div
 				className="flex gap-2 border-b border-foreground"
 				role="tablist"
-				aria-label="Arbeitsbereich"
+				aria-label={t.workspace}
 			>
 				<button
 					id="tab-contracts"
@@ -178,7 +175,7 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 					onClick={() => setTab("contracts")}
 				>
 					<FileText aria-hidden="true" className="size-4" />
-					Verträge
+					{t.contracts}
 				</button>
 				<button
 					id="tab-api"
@@ -192,7 +189,7 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 					onClick={() => setTab("api")}
 				>
 					<Code2 aria-hidden="true" className="size-4" />
-					API & Verbindungen
+					{t.api}
 				</button>
 			</div>
 			{tab === "contracts" ? (
@@ -215,18 +212,17 @@ function AuthenticatedConsole({ session, csrfToken }: AuthenticatedConsoleProps)
 					{sentContract ? (
 						<Alert role="status">
 							<Check aria-hidden="true" className="size-4" />
-							<AlertTitle>Vertrag versendet.</AlertTitle>
+							<AlertTitle>{t.sent}</AlertTitle>
 							<AlertDescription>
-								Die Einladung für „{sentContract.title}“ wurde an{" "}
-								{sentContract.recipients.map((recipient) => recipient.email).join(", ")} verschickt.
+								{t.sentTo}: {sentContract.recipients.map((recipient) => recipient.email).join(", ")}
 							</AlertDescription>
 						</Alert>
 					) : null}
 					<div className="grid grid-cols-3 gap-4 sm:gap-8">
 						{[
-							{ label: "Verträge gesamt", value: total, Icon: FileText },
-							{ label: "Unterschrift offen", value: open, Icon: FileClock },
-							{ label: "Unterzeichnet", value: completed, Icon: FileCheck2 },
+							{ label: t.total, value: total, Icon: FileText },
+							{ label: t.open, value: open, Icon: FileClock },
+							{ label: t.signed, value: completed, Icon: FileCheck2 },
 						].map(({ label, value, Icon }) => (
 							<Panel
 								key={label}
@@ -263,16 +259,18 @@ interface ContractsStateProps {
 }
 
 function ContractsState({ query, onNew }: ContractsStateProps) {
-	if (query.isPending) return <LoadingText boxed>Verträge werden geladen…</LoadingText>;
+	const { language } = useLanguage();
+	const t = consoleCopy[language];
+	if (query.isPending) return <LoadingText boxed>{t.loading}</LoadingText>;
 	if (query.isError)
 		return (
 			<Alert variant="destructive">
-				<AlertTitle>Verträge konnten nicht geladen werden</AlertTitle>
+				<AlertTitle>{t.loadingError}</AlertTitle>
 				<AlertDescription className="space-y-3">
-					<p>{query.error.message}</p>
+					<p>{consoleErrorMessage(query.error, language)}</p>
 					<Button variant="outline" size="sm" onClick={() => query.refetch()}>
 						<RefreshCw aria-hidden="true" />
-						Erneut versuchen
+						{t.retry}
 					</Button>
 				</AlertDescription>
 			</Alert>
@@ -287,18 +285,20 @@ interface LogoutStateProps {
 }
 
 function LogoutState({ pending, error, retry }: LogoutStateProps) {
+	const { language } = useLanguage();
+	const t = consoleCopy[language];
 	return (
 		<PageShell width="narrow" center>
 			<ConsoleBrand />
 			{pending ? (
-				<LoadingText boxed>Du wirst sicher abgemeldet…</LoadingText>
+				<LoadingText boxed>{t.loggingOut}</LoadingText>
 			) : (
 				<>
 					<Alert variant="destructive">
-						<AlertTitle>Abmeldung konnte nicht bestätigt werden</AlertTitle>
-						<AlertDescription>{error?.message}</AlertDescription>
+						<AlertTitle>{t.logoutError}</AlertTitle>
+						<AlertDescription>{consoleErrorMessage(error, language)}</AlertDescription>
 					</Alert>
-					<Button onClick={retry}>Abmeldung erneut versuchen</Button>
+					<Button onClick={retry}>{t.retry}</Button>
 				</>
 			)}
 			<ConsoleFooter />

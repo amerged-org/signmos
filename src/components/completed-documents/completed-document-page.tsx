@@ -1,65 +1,131 @@
-import { Download, FileText, History, Users } from "lucide-react";
+import { Download } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PageShell } from "@/components/layout/page-shell";
 import { Wordmark } from "@/components/layout/wordmark";
 import { LoadingText } from "@/components/patterns/loading-text";
-import { StatusBadge } from "@/components/patterns/status-badge";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { useLanguage } from "@/lib/i18n";
 
 interface CompletedDocumentView {
-	token: string;
 	envelopeId: string;
 	status: "completed";
-	finalPdf: {
-		downloadUrl: string;
-		contentType: "application/pdf";
-		byteSize: number;
-		sha256: string;
-		createdAt: string | null;
-	};
+	finalPdf: { downloadUrl: string; byteSize: number; sha256: string };
 	parties: Array<{
 		id: string;
 		name: string;
 		email: string;
 		status: string;
 		signedDate: string | null;
-		signedAt: string | null;
 	}>;
-	history: Array<{
-		type: string;
-		title: string;
-		detail: string | null;
-		occurredAt: string;
-	}>;
+	history: Array<{ type: string; title: string; detail: string | null; occurredAt: string }>;
 }
 
-interface CompletedDocumentPageProps {
-	token: string;
-}
+const copy = {
+	de: {
+		title: "Vertrag abgeschlossen",
+		download: "PDF herunterladen",
+		loading: "Vertrag wird geladen…",
+		unavailable: "Vertrag nicht verfügbar.",
+		signers: "Unterzeichnet von",
+		signed: "Unterzeichnet",
+		missingDate: "Datum nicht erfasst",
+		details: "Details",
+		history: "Verlauf",
+		hash: "Dokument-Hash",
+		document: "Dokument",
+		size: "Dateigröße",
+		bytes: "Byte",
+		events: {
+			document_uploaded: "Dokument hochgeladen",
+			document_revised: "Dokument überarbeitet",
+			sent: "Versendet",
+			viewed: "hat das Dokument angesehen",
+			signed: "hat unterschrieben",
+			changes_requested: "hat Änderungen angefragt",
+			declined: "hat abgelehnt",
+			canceled: "Abgebrochen",
+			expired: "Abgelaufen",
+			deleted: "Gelöscht",
+		},
+	},
+	en: {
+		title: "Document completed",
+		download: "Download PDF",
+		loading: "Loading document…",
+		unavailable: "Document unavailable.",
+		signers: "Signed by",
+		signed: "Signed",
+		missingDate: "Date not recorded",
+		details: "Details",
+		history: "History",
+		hash: "Document hash",
+		document: "Document",
+		size: "File size",
+		bytes: "bytes",
+		events: {
+			document_uploaded: "Document uploaded",
+			document_revised: "Document revised",
+			sent: "Sent",
+			viewed: "viewed the document",
+			signed: "signed",
+			changes_requested: "requested changes",
+			declined: "declined",
+			canceled: "Canceled",
+			expired: "Expired",
+			deleted: "Deleted",
+		},
+	},
+	nl: {
+		title: "Document afgerond",
+		download: "PDF downloaden",
+		loading: "Document laden…",
+		unavailable: "Document niet beschikbaar.",
+		signers: "Ondertekend door",
+		signed: "Ondertekend",
+		missingDate: "Datum niet vastgelegd",
+		details: "Details",
+		history: "Geschiedenis",
+		hash: "Documenthash",
+		document: "Document",
+		size: "Bestandsgrootte",
+		bytes: "bytes",
+		events: {
+			document_uploaded: "Document geüpload",
+			document_revised: "Document gewijzigd",
+			sent: "Verzonden",
+			viewed: "heeft het document bekeken",
+			signed: "heeft ondertekend",
+			changes_requested: "heeft wijzigingen gevraagd",
+			declined: "heeft geweigerd",
+			canceled: "Geannuleerd",
+			expired: "Verlopen",
+			deleted: "Verwijderd",
+		},
+	},
+} as const;
 
-export function CompletedDocumentPage({ token }: CompletedDocumentPageProps) {
+export function CompletedDocumentPage({ token }: { token: string }) {
+	const { language } = useLanguage();
+	const text = copy[language];
 	const [view, setView] = useState<CompletedDocumentView | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState(false);
 
 	useEffect(() => {
 		let active = true;
-		fetch(`/api/final-documents/${token}`)
+		fetch(`/api/final-documents/${encodeURIComponent(token)}`)
 			.then(async (response) => {
-				const body = (await response.json()) as {
-					data?: CompletedDocumentView;
-					error?: { message?: string };
-				};
+				const body = (await response.json()) as { data?: CompletedDocumentView };
 				if (!active) return;
 				if (response.ok && body.data) {
 					setView(body.data);
-					setError(null);
+					setError(false);
 					return;
 				}
-				setError(body.error?.message ?? "Completed document is not available");
+				setError(true);
 			})
 			.catch(() => {
-				if (active) setError("Completed document is not available");
+				if (active) setError(true);
 			});
 		return () => {
 			active = false;
@@ -67,118 +133,99 @@ export function CompletedDocumentPage({ token }: CompletedDocumentPageProps) {
 	}, [token]);
 
 	return (
-		<PageShell width="wide">
-			<header className="flex flex-wrap items-start justify-between gap-4 border-b pb-6">
-				<div className="space-y-4">
-					<Wordmark />
-					<div className="space-y-2">
-						<StatusBadge tone="success">Completed</StatusBadge>
-						<h1 className="text-balance font-semibold text-3xl text-foreground">
-							Completed document
-						</h1>
-						{view && (
-							<p className="break-all text-muted-foreground text-sm tabular-nums">
-								Envelope {view.envelopeId}
-							</p>
-						)}
-					</div>
-				</div>
+		<PageShell width="content">
+			<header className="space-y-7 border-b border-foreground pb-8">
+				<Wordmark />
 				{view && (
-					<Button asChild size="lg">
-						<a href={view.finalPdf.downloadUrl}>
-							<Download aria-hidden="true" className="size-4" />
-							Download final PDF
-						</a>
-					</Button>
+					<>
+						<h1 className="font-serif text-4xl font-normal tracking-tight sm:text-5xl">
+							{text.title}
+							<span className="text-destructive">.</span>
+						</h1>
+						<Button asChild size="lg">
+							<a href={view.finalPdf.downloadUrl}>
+								<Download aria-hidden="true" className="size-4" />
+								{text.download}
+							</a>
+						</Button>
+					</>
 				)}
 			</header>
-
-			{!view && !error && (
-				<LoadingText boxed>
-					<span className="block font-medium text-foreground">Loading completed document…</span>
-					<span className="mt-1 block text-pretty">Fetching final document details.</span>
-				</LoadingText>
-			)}
-
+			{!view && !error && <LoadingText boxed>{text.loading}</LoadingText>}
 			{error && (
 				<Alert variant="destructive" role="alert">
-					<AlertTitle>{error}</AlertTitle>
+					<AlertTitle>{text.unavailable}</AlertTitle>
 				</Alert>
 			)}
-
 			{view && (
 				<>
-					<section className="grid gap-4 border-b pb-6 md:grid-cols-3">
-						<div className="space-y-1">
-							<p className="text-muted-foreground text-sm">Final status</p>
-							<p className="font-semibold text-lg capitalize">{view.status}</p>
-						</div>
-						<div className="space-y-1">
-							<p className="text-muted-foreground text-sm">Final PDF</p>
-							<p className="inline-flex items-center gap-2 text-sm tabular-nums">
-								<FileText aria-hidden="true" className="size-4" />
-								{formatBytes(view.finalPdf.byteSize)}
-							</p>
-						</div>
-						<div className="space-y-1">
-							<p className="text-muted-foreground text-sm">Document hash</p>
-							<p className="break-all font-mono text-xs tabular-nums">{view.finalPdf.sha256}</p>
-						</div>
-					</section>
-
-					<section className="space-y-4">
-						<div className="flex items-center gap-2">
-							<Users aria-hidden="true" className="size-5" />
-							<h2 className="text-balance font-semibold text-xl">Party summary</h2>
-						</div>
-						<div className="grid gap-3 md:grid-cols-2">
+					<section className="space-y-4" aria-labelledby="completed-signers">
+						<h2 id="completed-signers" className="font-serif text-2xl">
+							{text.signers}
+						</h2>
+						<ul className="divide-y border-y">
 							{view.parties.map((party) => (
-								<div key={party.id} className="rounded-lg border bg-card p-4">
-									<div className="flex items-start justify-between gap-3">
-										<div>
-											<p className="font-medium">{party.name}</p>
-											<p className="break-all text-muted-foreground text-sm">{party.email}</p>
-										</div>
-										<StatusBadge tone="success">{titleCase(party.status)}</StatusBadge>
-									</div>
-									<p className="mt-3 text-muted-foreground text-sm tabular-nums">
-										Signed date {party.signedDate ?? "not recorded"}
-									</p>
-								</div>
-							))}
-						</div>
-					</section>
-
-					<section className="space-y-4">
-						<div className="flex items-center gap-2">
-							<History aria-hidden="true" className="size-5" />
-							<h2 className="text-balance font-semibold text-xl">History</h2>
-						</div>
-						<ol className="space-y-3">
-							{view.history.map((event) => (
 								<li
-									key={`${event.type}-${event.occurredAt}`}
-									className="rounded-lg border bg-card p-4"
+									key={party.id}
+									className="flex flex-wrap items-start justify-between gap-3 py-4"
 								>
-									<p className="font-medium">{event.title}</p>
-									<div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground text-sm tabular-nums">
-										<time dateTime={event.occurredAt}>{event.occurredAt}</time>
-										{event.detail && <span>{event.detail}</span>}
+									<div>
+										<p>{party.name}</p>
+										<p className="break-all text-sm text-muted-foreground">{party.email}</p>
 									</div>
+									{party.status === "completed" && (
+										<p className="text-sm text-muted-foreground">
+											{text.signed} · {party.signedDate ?? text.missingDate}
+										</p>
+									)}
 								</li>
 							))}
-						</ol>
+						</ul>
 					</section>
+					<details className="border-y py-4">
+						<summary className="cursor-pointer font-mono text-xs uppercase tracking-wide">
+							{text.details}
+						</summary>
+						<div className="space-y-5 pt-5 text-sm">
+							<p className="break-all">
+								<span className="text-muted-foreground">{text.document}: </span>
+								{view.envelopeId}
+							</p>
+							<p>
+								<span className="text-muted-foreground">{text.size}: </span>
+								{view.finalPdf.byteSize.toLocaleString(language)} {text.bytes}
+							</p>
+							<p className="break-all">
+								<span className="text-muted-foreground">{text.hash}: </span>
+								{view.finalPdf.sha256}
+							</p>
+							<h2 className="font-serif text-xl">{text.history}</h2>
+							<ol className="space-y-3">
+								{view.history.map((event) => (
+									<li key={`${event.type}-${event.occurredAt}`} className="border-t pt-3">
+										<p>{eventTitle(event, text.events)}</p>
+										<p className="text-muted-foreground">
+											<time dateTime={event.occurredAt}>{event.occurredAt}</time>
+											{event.detail && <> · {event.detail}</>}
+										</p>
+									</li>
+								))}
+							</ol>
+						</div>
+					</details>
 				</>
 			)}
 		</PageShell>
 	);
 }
 
-function formatBytes(value: number): string {
-	return `${value.toLocaleString("en-US")} bytes`;
-}
-
-function titleCase(value: string): string {
-	return value ? `${value.slice(0, 1).toUpperCase()}${value.slice(1)}` : value;
+function eventTitle(
+	event: CompletedDocumentView["history"][number],
+	labels: Record<string, string>,
+): string {
+	const label = labels[event.type];
+	if (!label) return event.title;
+	if (!["viewed", "signed", "changes_requested", "declined"].includes(event.type)) return label;
+	const name = event.title.replace(/ (viewed the document|signed|requested changes|declined)$/, "");
+	return name === event.title ? label : `${name} ${label}`;
 }

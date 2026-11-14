@@ -2,11 +2,56 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { LanguageSwitcher } from "@/components/layout/language-switcher";
+import { LanguageProvider } from "@/lib/i18n";
 import { NewContract } from "./new-contract";
 
 afterEach(() => {
 	cleanup();
 	vi.unstubAllGlobals();
+	localStorage.clear();
+});
+
+it("keeps form data when switching languages without changing the contract request", async () => {
+	const row = {
+		id: "id",
+		title: "test",
+		status: "sent",
+		recipients: [],
+		createdAt: "2026-01-01T00:00:00Z",
+	};
+	const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+		Response.json({ data: row }, { status: 201 }),
+	);
+	vi.stubGlobal("fetch", fetchMock);
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+	});
+	render(
+		<QueryClientProvider client={client}>
+			<LanguageProvider>
+				<LanguageSwitcher />
+				<NewContract csrfToken="csrf" onSent={vi.fn()} onCancel={vi.fn()} />
+			</LanguageProvider>
+		</QueryClientProvider>,
+	);
+	fireEvent.change(screen.getByLabelText("Vertrag als PDF"), {
+		target: { files: [new File(["%PDF"], "test.pdf", { type: "application/pdf" })] },
+	});
+	fireEvent.change(screen.getByLabelText("Vollständiger Name"), { target: { value: "Test User" } });
+	fireEvent.change(screen.getByLabelText("E-Mail-Adresse"), {
+		target: { value: "test@example.com" },
+	});
+	fireEvent.click(screen.getByRole("button", { name: "English" }));
+	expect(screen.getByLabelText("Full name")).toHaveProperty("value", "Test User");
+	fireEvent.click(screen.getByRole("button", { name: "Review" }));
+	await screen.findByRole("dialog", { name: "Send contract for signature?" });
+	fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+	await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+	expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).not.toHaveProperty("language");
+	expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+		recipient: { email: "test@example.com" },
+	});
 });
 
 describe("contract send form", () => {

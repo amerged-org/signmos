@@ -5,6 +5,7 @@ import { useState } from "react";
 import { z } from "zod";
 import {
 	type ApiToken,
+	consoleErrorMessage,
 	consoleKeys,
 	consoleRequest,
 	formatDate,
@@ -29,30 +30,137 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MAX_SOURCE_PDF_BYTES, MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
+import { useLanguage } from "@/lib/i18n";
 
 interface ApiAccessProps {
 	csrfToken: string;
 }
 
-const sendExample = `export AMERGED_SIGN_TOKEN="DEIN_API_SCHLÜSSEL"
-PDF_BASE64="$(base64 < vertrag.pdf | tr -d '\\n')"
+const copy = {
+	de: {
+		title: "API-Schlüssel",
+		loading: "Schlüssel werden geladen…",
+		loadError: "Schlüssel konnten nicht geladen werden.",
+		empty: "Noch keine Schlüssel",
+		name: "Name",
+		required: "Name eingeben.",
+		create: "Schlüssel erstellen",
+		creating: "Wird erstellt…",
+		security: "Schlüssel nur vertrauenswürdigen Anwendungen geben.",
+		createError: "Schlüssel konnte nicht erstellt werden.",
+		newKey: "Neuer Schlüssel",
+		oneTime: "Nur jetzt sichtbar. Bitte sicher speichern.",
+		copyKey: "Schlüssel kopieren",
+		hide: "Gespeichert",
+		api: "API verwenden",
+		apiDescription: "PDF und Empfänger per API senden.",
+		copyExample: "Beispiel kopieren",
+		example: "Beispiel anzeigen",
+		limits: (mb: number, pages: number) => `PDF: bis ${mb} MB und ${pages} Seiten.`,
+		docs: "OpenAPI öffnen",
+		list: "Verträge",
+		download: "Signiertes PDF",
+		copyKeyOk: "Schlüssel kopiert.",
+		copyExampleOk: "Beispiel kopiert.",
+		copyFailed: "Bitte manuell kopieren.",
+		revokeTitle: "Schlüssel widerrufen?",
+		revokeDescription: (name: string) => `„${name}“ verliert sofort den Zugriff.`,
+		cancel: "Abbrechen",
+		revoke: "Widerrufen",
+		revoking: "Wird widerrufen…",
+		active: "Aktiv",
+		revoked: "Widerrufen",
+		created: "Erstellt",
+		lastUsed: "Zuletzt genutzt",
+		revokeLabel: (name: string) => `${name} widerrufen`,
+	},
+	en: {
+		title: "API keys",
+		loading: "Loading keys…",
+		loadError: "Could not load keys.",
+		empty: "No keys yet",
+		name: "Name",
+		required: "Enter a name.",
+		create: "Create key",
+		creating: "Creating…",
+		security: "Only share keys with trusted applications.",
+		createError: "Could not create key.",
+		newKey: "New key",
+		oneTime: "Shown only once. Store it safely.",
+		copyKey: "Copy key",
+		hide: "Saved",
+		api: "Use the API",
+		apiDescription: "Send a PDF and recipient via API.",
+		copyExample: "Copy example",
+		example: "Show example",
+		limits: (mb: number, pages: number) => `PDF: up to ${mb} MB and ${pages} pages.`,
+		docs: "OpenAPI reference",
+		list: "Contracts",
+		download: "Signed PDF",
+		copyKeyOk: "Key copied.",
+		copyExampleOk: "Example copied.",
+		copyFailed: "Please copy manually.",
+		revokeTitle: "Revoke key?",
+		revokeDescription: (name: string) => `“${name}” will immediately lose access.`,
+		cancel: "Cancel",
+		revoke: "Revoke",
+		revoking: "Revoking…",
+		active: "Active",
+		revoked: "Revoked",
+		created: "Created",
+		lastUsed: "Last used",
+		revokeLabel: (name: string) => `Revoke ${name}`,
+	},
+	nl: {
+		title: "API-sleutels",
+		loading: "Sleutels laden…",
+		loadError: "Sleutels laden mislukt.",
+		empty: "Nog geen sleutels",
+		name: "Naam",
+		required: "Vul een naam in.",
+		create: "Sleutel maken",
+		creating: "Bezig…",
+		security: "Deel sleutels alleen met vertrouwde toepassingen.",
+		createError: "Sleutel maken mislukt.",
+		newKey: "Nieuwe sleutel",
+		oneTime: "Slechts eenmaal zichtbaar. Bewaar hem veilig.",
+		copyKey: "Sleutel kopiëren",
+		hide: "Opgeslagen",
+		api: "API gebruiken",
+		apiDescription: "Verstuur een pdf en ontvanger via de API.",
+		copyExample: "Voorbeeld kopiëren",
+		example: "Voorbeeld tonen",
+		limits: (mb: number, pages: number) => `Pdf: maximaal ${mb} MB en ${pages} pagina's.`,
+		docs: "OpenAPI-documentatie",
+		list: "Contracten",
+		download: "Ondertekende pdf",
+		copyKeyOk: "Sleutel gekopieerd.",
+		copyExampleOk: "Voorbeeld gekopieerd.",
+		copyFailed: "Kopieer handmatig.",
+		revokeTitle: "Sleutel intrekken?",
+		revokeDescription: (name: string) => `‘${name}’ verliest direct toegang.`,
+		cancel: "Annuleren",
+		revoke: "Intrekken",
+		revoking: "Intrekken…",
+		active: "Actief",
+		revoked: "Ingetrokken",
+		created: "Gemaakt",
+		lastUsed: "Laatst gebruikt",
+		revokeLabel: (name: string) => `${name} intrekken`,
+	},
+} as const;
 
-jq -n --arg pdf "$PDF_BASE64" '{
-  title: "Beratungsvertrag",
-  recipient: {
-    name: "Erika Musterfrau",
-    email: "erika@example.com"
-  },
-  pdf: { filename: "vertrag.pdf", base64: $pdf }
-}' | curl --fail-with-body https://sign.amerged.com/api/contracts \\
+const sendExample = `curl --fail-with-body https://sign.amerged.com/api/contracts \\
   -H "Authorization: Bearer $AMERGED_SIGN_TOKEN" \\
-  -H "Content-Type: application/json" \\
   -H "Idempotency-Key: $(uuidgen)" \\
-  --data-binary @-`;
+  -F "pdf=@contract.pdf;type=application/pdf" \\
+  -F "definition=@fields.json;type=application/json"`;
 
 export function ApiAccess({ csrfToken }: ApiAccessProps) {
+	const { language } = useLanguage();
+	const t = copy[language];
 	const queryClient = useQueryClient();
-	const [copyStatus, setCopyStatus] = useState("");
+	const [copyStatus, setCopyStatus] = useState<"key" | "example" | "failed" | null>(null);
 	const [pendingRevoke, setPendingRevoke] = useState<ApiToken | null>(null);
 	const listing = useQuery({
 		queryKey: consoleKeys.tokens,
@@ -101,16 +209,16 @@ export function ApiAccess({ csrfToken }: ApiAccessProps) {
 	const form = useForm({
 		defaultValues: { name: "" },
 		onSubmit: ({ value }) => {
-			setCopyStatus("");
+			setCopyStatus(null);
 			generation.mutate(value.name.trim());
 		},
 	});
-	async function copy(value: string, label: string): Promise<void> {
+	async function copyToClipboard(value: string, kind: "key" | "example"): Promise<void> {
 		try {
 			await navigator.clipboard.writeText(value);
-			setCopyStatus(label);
+			setCopyStatus(kind);
 		} catch {
-			setCopyStatus("Bitte markiere den Text und kopiere ihn manuell.");
+			setCopyStatus("failed");
 		}
 	}
 
@@ -118,28 +226,28 @@ export function ApiAccess({ csrfToken }: ApiAccessProps) {
 		<div className="space-y-6">
 			<Panel className="space-y-5">
 				<div className="space-y-1">
-					<PanelTitle>API-Schlüssel</PanelTitle>
-					<PanelDescription>Verbinde deine eigenen Anwendungen mit amerged Sign.</PanelDescription>
+					<PanelTitle>{t.title}</PanelTitle>
 				</div>
 				{listing.isPending ? (
-					<LoadingText>API-Schlüssel werden geladen…</LoadingText>
+					<LoadingText>{t.loading}</LoadingText>
 				) : listing.isError ? (
 					<Alert variant="destructive">
-						<AlertTitle>Schlüssel konnten nicht geladen werden</AlertTitle>
-						<AlertDescription>{listing.error.message}</AlertDescription>
+						<AlertTitle>{t.loadError}</AlertTitle>
+						<AlertDescription>{consoleErrorMessage(listing.error, language)}</AlertDescription>
 					</Alert>
 				) : listing.data.length ? (
 					<ul className="divide-y">
 						{listing.data.map((token) => (
-							<TokenRow key={token.id} token={token} onRevoke={setPendingRevoke} />
+							<TokenRow
+								key={token.id}
+								token={token}
+								onRevoke={setPendingRevoke}
+								language={language}
+							/>
 						))}
 					</ul>
 				) : (
-					<EmptyState
-						icon={KeyRound}
-						title="Deine erste Verbindung beginnt hier."
-						description="Erstelle einen Schlüssel, um Verträge aus einer anderen Anwendung zu versenden."
-					/>
+					<EmptyState icon={KeyRound} title={t.empty} />
 				)}
 				<fieldset
 					disabled={
@@ -156,13 +264,12 @@ export function ApiAccess({ csrfToken }: ApiAccessProps) {
 						<form.Field
 							name="name"
 							validators={{
-								onSubmit: ({ value }) =>
-									value.trim() ? undefined : "Bitte gib dem Schlüssel einen Namen.",
+								onSubmit: ({ value }) => (value.trim() ? undefined : t.required),
 							}}
 						>
 							{(field) => (
 								<div className="w-full flex-1 space-y-2">
-									<Label htmlFor="api-key-name">Name der Verbindung</Label>
+									<Label htmlFor="api-key-name">{t.name}</Label>
 									<Input
 										id="api-key-name"
 										name={field.name}
@@ -181,46 +288,43 @@ export function ApiAccess({ csrfToken }: ApiAccessProps) {
 						</form.Field>
 						<Button type="submit">
 							<Plus aria-hidden="true" />
-							{generation.isPending ? "Wird erstellt…" : "Schlüssel erstellen"}
+							{generation.isPending ? t.creating : t.create}
 						</Button>
 					</form>
 				</fieldset>
-				<p className="text-muted-foreground text-xs leading-5">
-					Ein Schlüssel hat Zugriff auf deine Verträge. Hinterlege ihn nur in Anwendungen, denen du
-					vertraust.
-				</p>
+				<p className="text-muted-foreground text-xs leading-5">{t.security}</p>
 				{generation.isError ? (
 					<Alert variant="destructive">
-						<AlertTitle>Schlüssel konnte nicht erstellt werden</AlertTitle>
-						<AlertDescription>{generation.error.message}</AlertDescription>
+						<AlertTitle>{t.createError}</AlertTitle>
+						<AlertDescription>{consoleErrorMessage(generation.error, language)}</AlertDescription>
 					</Alert>
 				) : null}
 			</Panel>
 			{generation.data ? (
 				<Alert role="status">
-					<AlertTitle>Dein neuer Schlüssel · jetzt kopieren</AlertTitle>
+					<AlertTitle>{t.newKey}</AlertTitle>
 					<AlertDescription className="space-y-3">
-						<p>Er wird nur dieses eine Mal angezeigt. Speichere ihn an einem sicheren Ort.</p>
+						<p>{t.oneTime}</p>
 						<code className="block select-all break-all rounded-md bg-muted p-3 text-sm">
 							{generation.data.secret}
 						</code>
 						<div className="flex flex-wrap gap-2">
 							<Button
 								variant="outline"
-								onClick={() => copy(generation.data.secret, "Schlüssel kopiert.")}
+								onClick={() => copyToClipboard(generation.data.secret, "key")}
 							>
 								<Copy aria-hidden="true" />
-								Schlüssel kopieren
+								{t.copyKey}
 							</Button>
 							<Button
 								variant="ghost"
 								onClick={() => {
 									generation.reset();
-									setCopyStatus("");
+									setCopyStatus(null);
 								}}
 							>
 								<Check aria-hidden="true" />
-								Gespeichert und ausblenden
+								{t.hide}
 							</Button>
 						</div>
 					</AlertDescription>
@@ -229,51 +333,54 @@ export function ApiAccess({ csrfToken }: ApiAccessProps) {
 			<Panel className="space-y-5">
 				<div className="flex flex-wrap items-start justify-between gap-3">
 					<div className="space-y-1">
-						<PanelTitle>Vertrag per API versenden</PanelTitle>
-						<PanelDescription>
-							Ein Aufruf erstellt den Vertrag und versendet die Einladung.
-						</PanelDescription>
+						<PanelTitle>{t.api}</PanelTitle>
+						<PanelDescription>{t.apiDescription}</PanelDescription>
 					</div>
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => copy(sendExample, "API-Beispiel kopiert.")}
-					>
-						<Copy aria-hidden="true" />
-						Beispiel kopieren
+					<Button asChild variant="outline" size="sm">
+						<a href="/openapi.json" target="_blank" rel="noreferrer">
+							{t.docs} ↗
+						</a>
 					</Button>
 				</div>
 				<p className="text-muted-foreground text-sm leading-6">
-					Ersetze den Schlüssel, die PDF-Datei und die Empfängerdaten im Beispiel. Die PDF darf
-					maximal {MAX_SOURCE_PDF_BYTES / 1024 / 1024} MB und {MAX_SOURCE_PDF_PAGES - 1} Seiten
-					haben. Eine Unterschriftsseite wird automatisch ergänzt. Derselbe Idempotency-Key kann für
-					eine unveränderte Wiederholung verwendet werden.
+					{t.limits(MAX_SOURCE_PDF_BYTES / 1024 / 1024, MAX_SOURCE_PDF_PAGES)}
 				</p>
-				<pre className="overflow-x-auto rounded-lg border bg-muted/40 p-4 text-xs leading-6">
-					<code>{sendExample}</code>
-				</pre>
+				<details className="space-y-3">
+					<summary className="cursor-pointer text-sm underline underline-offset-4">
+						{t.example}
+					</summary>
+					<pre className="overflow-x-auto border bg-muted/40 p-4 text-xs leading-6">
+						<code>{sendExample}</code>
+					</pre>
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => copyToClipboard(sendExample, "example")}
+					>
+						<Copy aria-hidden="true" />
+						{t.copyExample}
+					</Button>
+				</details>
 				<div className="grid gap-4 text-sm sm:grid-cols-2">
 					<div className="space-y-1">
-						<p className="font-medium">Verträge abrufen</p>
+						<p className="font-medium">{t.list}</p>
 						<code className="break-all text-muted-foreground text-xs">GET /api/contracts</code>
-						<p className="text-muted-foreground text-xs">
-							Status, Empfänger und Datum deiner Verträge.
-						</p>
 					</div>
 					<div className="space-y-1">
-						<p className="font-medium">Unterzeichnete PDF laden</p>
+						<p className="font-medium">{t.download}</p>
 						<code className="break-all text-muted-foreground text-xs">
 							GET /api/contracts/&#123;id&#125;/pdf
 						</code>
-						<p className="text-muted-foreground text-xs">
-							Verfügbar, sobald der Vertrag abgeschlossen ist.
-						</p>
 					</div>
 				</div>
 			</Panel>
 			{copyStatus ? (
 				<output className="text-muted-foreground text-sm" aria-live="polite">
-					{copyStatus}
+					{copyStatus === "key"
+						? t.copyKeyOk
+						: copyStatus === "example"
+							? t.copyExampleOk
+							: t.copyFailed}
 				</output>
 			) : null}
 			<Dialog
@@ -284,21 +391,18 @@ export function ApiAccess({ csrfToken }: ApiAccessProps) {
 			>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>API-Schlüssel widerrufen?</DialogTitle>
-						<DialogDescription>
-							Die Verbindung „{pendingRevoke?.name}“ verliert sofort den Zugriff. Du kannst
-							anschließend einen neuen Schlüssel erstellen.
-						</DialogDescription>
+						<DialogTitle>{t.revokeTitle}</DialogTitle>
+						<DialogDescription>{t.revokeDescription(pendingRevoke?.name ?? "")}</DialogDescription>
 					</DialogHeader>
 					{revocation.isError ? (
 						<Alert variant="destructive">
-							<AlertDescription>{revocation.error.message}</AlertDescription>
+							<AlertDescription>{consoleErrorMessage(revocation.error, language)}</AlertDescription>
 						</Alert>
 					) : null}
 					<DialogFooter>
 						<DialogClose asChild>
 							<Button variant="outline" disabled={revocation.isPending}>
-								Abbrechen
+								{t.cancel}
 							</Button>
 						</DialogClose>
 						<Button
@@ -308,7 +412,7 @@ export function ApiAccess({ csrfToken }: ApiAccessProps) {
 								if (pendingRevoke) revocation.mutate(pendingRevoke);
 							}}
 						>
-							{revocation.isPending ? "Wird widerrufen…" : "Schlüssel widerrufen"}
+							{revocation.isPending ? t.revoking : t.revoke}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -320,9 +424,11 @@ export function ApiAccess({ csrfToken }: ApiAccessProps) {
 interface TokenRowProps {
 	token: ApiToken;
 	onRevoke: (token: ApiToken) => void;
+	language: ReturnType<typeof useLanguage>["language"];
 }
 
-function TokenRow({ token, onRevoke }: TokenRowProps) {
+function TokenRow({ token, onRevoke, language }: TokenRowProps) {
+	const t = copy[language];
 	const active = token.status === "active";
 	return (
 		<li className="flex flex-wrap items-center justify-between gap-3 py-4">
@@ -330,23 +436,23 @@ function TokenRow({ token, onRevoke }: TokenRowProps) {
 				<p className="flex flex-wrap items-center gap-2 font-medium text-sm">
 					{token.name}
 					<StatusBadge tone={active ? "success" : "neutral"}>
-						{active ? "Aktiv" : "Widerrufen"}
+						{active ? t.active : t.revoked}
 					</StatusBadge>
 				</p>
 				<p className="text-muted-foreground text-xs">
-					<code>{token.hint}</code> · Erstellt am {formatDate(token.createdAt)}
-					{token.lastUsedAt ? ` · Zuletzt genutzt am ${formatDate(token.lastUsedAt)}` : ""}
+					<code>{token.hint}</code> · {t.created} {formatDate(token.createdAt, language)}
+					{token.lastUsedAt ? ` · ${t.lastUsed} ${formatDate(token.lastUsedAt, language)}` : ""}
 				</p>
 			</div>
 			{active ? (
 				<Button
 					variant="ghost"
 					size="sm"
-					aria-label={`${token.name} widerrufen`}
+					aria-label={t.revokeLabel(token.name)}
 					onClick={() => onRevoke(token)}
 				>
 					<Trash2 aria-hidden="true" />
-					Widerrufen
+					{t.revoke}
 				</Button>
 			) : null}
 		</li>

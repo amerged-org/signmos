@@ -2,8 +2,10 @@ import { FileText } from "lucide-react";
 import { pdfPage } from "@/components/envelopes/field-placement-workspace";
 import { useNoncePositionStyle } from "@/components/nonce-position-style";
 import { TextLink } from "@/components/patterns/text-link";
+import { useLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { PartnerSignaturePreference } from "./partner-signature-form";
+import { type SigningLanguage, signingCopy } from "./signing-copy";
 
 export interface SignerField {
 	id: string;
@@ -57,18 +59,21 @@ export function SigningDocumentPreview({
 	) => void;
 	onStopFieldDrag: () => void;
 }) {
-	const previewFields = signerPreviewFields(session);
+	const { language } = useLanguage();
+	const copy = signingCopy[language];
+	const previewFields = signerPreviewFields(session, language);
 	const pages = previewPages(previewFields);
 
 	return (
-		<section className="min-w-0 space-y-5" aria-label="Vertrag und Felder">
+		<section className="min-w-0 space-y-5" aria-label={copy.contractFields}>
 			<div className="flex flex-wrap items-end justify-between gap-4">
 				<div className="space-y-3">
 					<p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-						<span className="mr-2 text-destructive">01 /</span> Dokument
+						<span className="mr-2 text-destructive">01 /</span> {copy.document}
 					</p>
 					<h2 className="font-serif text-3xl font-normal leading-tight">
-						Dein Vertrag<span className="text-destructive">.</span>
+						{copy.yourContract}
+						<span className="text-destructive">.</span>
 					</h2>
 				</div>
 				<TextLink
@@ -76,60 +81,57 @@ export function SigningDocumentPreview({
 					href={session.sourceDocument.downloadUrl}
 				>
 					<FileText aria-hidden="true" className="size-4" />
-					PDF öffnen
+					{copy.openPdf}
 				</TextLink>
 			</div>
 			<div className="space-y-3">
-				<p className="text-sm leading-6 text-muted-foreground">
-					Lies den gesamten Vertrag, bevor du unterschreibst.
-				</p>
+				<p className="text-sm leading-6 text-muted-foreground">{copy.readContract}</p>
 				<iframe
 					className="h-[70vh] min-h-[400px] w-full border border-border bg-muted"
 					src={`${session.sourceDocument.downloadUrl}#view=FitH`}
-					title="Vollständiger Vertrag"
+					title={copy.fullContract}
 				/>
 			</div>
-			<div className="border-t pt-4">
-				<h3 className="font-serif text-xl font-normal">Deine Felder im Vertrag</h3>
-				<p className="mt-1 text-sm text-muted-foreground">
-					Die Markierungen zeigen, wo deine Angaben erscheinen.
-				</p>
-			</div>
-			<div className="grid gap-4">
-				{pages.map((page, index) => (
-					<fieldset
-						key={page}
-						aria-label={`Vertrag Seite ${page}`}
-						data-signing-pdf-page
-						className="relative aspect-[612/792] w-full overflow-hidden border border-border bg-background"
-						onPointerMove={onContinueFieldDrag}
-						onPointerUp={onStopFieldDrag}
-						onPointerLeave={onStopFieldDrag}
-						onMouseMove={onContinueFieldDrag}
-						onMouseUp={onStopFieldDrag}
-						onMouseLeave={onStopFieldDrag}
-					>
-						<legend className="sr-only">Vertrag Seite {page}</legend>
-						<iframe
-							className="absolute inset-0 h-full w-full bg-muted"
-							src={pdfPreviewUrl(session.sourceDocument.downloadUrl, page)}
-							title={index === 0 ? "Vertragsvorschau" : `Vertragsvorschau Seite ${page}`}
-						/>
-						<div className="pointer-events-none absolute inset-0">
-							{previewFields
-								.filter((field) => field.page === page)
-								.map((field) => (
-									<SigningPreviewFieldOverlay
-										key={field.id}
-										field={field}
-										canDrag={canDragFields}
-										onStartDrag={onStartFieldDrag}
-									/>
-								))}
-						</div>
-					</fieldset>
-				))}
-			</div>
+			<details open={canDragFields || undefined} className="space-y-4 border-t pt-4">
+				<summary className="cursor-pointer font-serif text-xl">{copy.contractFields}</summary>
+				<div className="grid gap-4">
+					{pages.map((page, index) => (
+						<fieldset
+							key={page}
+							aria-label={`${copy.contractPage} ${page}`}
+							data-signing-pdf-page
+							className="relative aspect-[612/792] w-full overflow-hidden border border-border bg-background"
+							onPointerMove={onContinueFieldDrag}
+							onPointerUp={onStopFieldDrag}
+							onPointerLeave={onStopFieldDrag}
+							onMouseMove={onContinueFieldDrag}
+							onMouseUp={onStopFieldDrag}
+							onMouseLeave={onStopFieldDrag}
+						>
+							<legend className="sr-only">
+								{copy.contractPage} {page}
+							</legend>
+							<iframe
+								className="absolute inset-0 h-full w-full bg-muted"
+								src={pdfPreviewUrl(session.sourceDocument.downloadUrl, page)}
+								title={index === 0 ? copy.preview : `${copy.preview} ${copy.page} ${page}`}
+							/>
+							<div className="pointer-events-none absolute inset-0">
+								{previewFields
+									.filter((field) => field.page === page)
+									.map((field) => (
+										<SigningPreviewFieldOverlay
+											key={field.id}
+											field={field}
+											canDrag={canDragFields}
+											onStartDrag={onStartFieldDrag}
+										/>
+									))}
+							</div>
+						</fieldset>
+					))}
+				</div>
+			</details>
 		</section>
 	);
 }
@@ -146,6 +148,8 @@ function SigningPreviewFieldOverlay({
 		field: SignerPreviewField,
 	) => void;
 }) {
+	const { language } = useLanguage();
+	const copy = signingCopy[language];
 	const hasValue = Boolean(field.value?.trim());
 	const isDraggable = canDrag && field.assignedToCurrentSigner && !hasValue;
 	const position = useNoncePositionStyle(field, pdfPage);
@@ -162,7 +166,7 @@ function SigningPreviewFieldOverlay({
 	) : (
 		<>
 			<span className="truncate font-medium capitalize">
-				{field.type === "signature" ? "Hier unterschreiben" : signerFieldLabel(field)}
+				{field.type === "signature" ? copy.signHere : signerFieldLabel(field, language)}
 			</span>
 			<span className="truncate">{field.recipientName}</span>
 		</>
@@ -172,7 +176,7 @@ function SigningPreviewFieldOverlay({
 			<>
 				{position.styles}
 				<button
-					aria-label={`${field.recipientName} · ${signerFieldLabel(field)} · Feld`}
+					aria-label={`${field.recipientName} · ${signerFieldLabel(field, language)} · ${copy.field}`}
 					type="button"
 					className={className}
 					onPointerDown={(event) => onStartDrag(event, field)}
@@ -187,7 +191,7 @@ function SigningPreviewFieldOverlay({
 		<>
 			{position.styles}
 			<div
-				aria-label={`${field.recipientName} · ${signerFieldLabel(field)} · ${hasValue ? "ausgefüllt" : "Feld"}`}
+				aria-label={`${field.recipientName} · ${signerFieldLabel(field, language)} · ${hasValue ? copy.filled : copy.field}`}
 				role="img"
 				className={className}
 			>
@@ -197,12 +201,10 @@ function SigningPreviewFieldOverlay({
 	);
 }
 
-export function signerFieldLabel(field: SignerField): string {
+export function signerFieldLabel(field: SignerField, language: SigningLanguage = "de"): string {
 	if (field.label) return field.label;
 	if (field.name) return field.name;
-	return { signature: "Unterschrift", date: "Datum", text: "Text", checkbox: "Auswahl" }[
-		field.type
-	];
+	return signingCopy[language][field.type];
 }
 
 function PreviewFieldValue({ field, value }: { field: SignerPreviewField; value: string }) {
@@ -221,12 +223,15 @@ function PreviewFieldValue({ field, value }: { field: SignerPreviewField; value:
 	);
 }
 
-function signerPreviewFields(session: SignerSession): SignerPreviewField[] {
+function signerPreviewFields(
+	session: SignerSession,
+	language: SigningLanguage,
+): SignerPreviewField[] {
 	if (session.previewFields?.length) return session.previewFields;
 	return session.fields.map((field) => ({
 		...field,
 		recipientId: session.recipientId,
-		recipientName: "Unterzeichner",
+		recipientName: signingCopy[language].signer,
 		value: null,
 		assignedToCurrentSigner: true,
 	}));
