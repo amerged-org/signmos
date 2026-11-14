@@ -33,6 +33,25 @@ The harness obtained the protected Dev share link privately and kept its cookies
 
 Private storage initially refused deletion while signed upload capabilities could still write. Fresh idempotency keys succeeded after the capability and drain window; successful API deletion receipts confirmed erasure of both fixtures' private artifacts. The last synthetic upload was at 13:10:24 UTC; follow-up cleanup ran after the expiry window. No additional contracts were created during diagnosis or cleanup.
 
-The initial generic 503 classification for this temporary erasure state remains a separate application improvement owned by the parent workflow. This evidence covers the deployment listed above; any later pending-error mapping change needs its own validation.
+The initial deployment returned a generic 503 during the temporary erasure window. The later typed error correction is verified separately below.
 
 No share URL, cookies, API credential, token hash, recipient signing link or PDF content is retained in this evidence. The ephemeral smoke and cleanup scripts live outside Git under `/tmp`.
+
+## Typed pending-delete verification
+
+Status: VERIFIED.
+
+Fixed Dev commit: `7259e423c4f6d901e29f4dacc79c85302382b71d`.
+Deployment: `01M7D3G4DQ18G0BD0H9QXB9SKH`.
+Artifact: `4dbd38cebbb2e5fe23c7571632c740e92260e8b2ab48cfe097e22a1d47fe27ee`.
+
+- Synthetic draft staged at 2026-11-14T13:20:38.328Z.
+- New Dev readiness flag received at 2026-11-14T13:25:43.719Z for commit 7259e423c4f6d901e29f4dacc79c85302382b71d.
+- First draft capability expired before new Dev was tested; its deletion returned 200.
+- Synthetic draft staged at 2026-11-14T13:26:24.724Z.
+- New Dev DELETE returned 503 STORAGE_DELETE_PENDING, `retryable: true`, retryAt 2026-11-14T13:31:53.864Z and matching HTTP-date Retry-After Sat, 14 Nov 2026 13:31:54 GMT.
+- Same Idempotency-Key replay preserved status, complete body and Retry-After exactly.
+- Fresh-key DELETE after retryAt returned 200 at 2026-11-14T13:32:03.696Z; successful receipt confirms private artifact erasure and persisted deleted state.
+- All recent taskfixture API credentials are revoked; aggregate active count zero.
+
+Typed pending semantics, exact replay, retry scheduling and final erasure were verified against actual protected Dev.

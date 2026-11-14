@@ -1,6 +1,6 @@
 # Vertrags-CRUD, sichere Signatur-Links und PDF-Abschluss
 
-Status: IN PROGRESS
+Status: COMPLETE for the accepted implementation scope. HTML-to-PDF remains OPEN.
 
 ## Akzeptierter Umfang
 - API-first Vertragsentwürfe aus PDF + JSON; keine Vorlagenverwaltung.
@@ -33,3 +33,5 @@ Status: IN PROGRESS
 - Release candidate verified: `pnpm types`, `pnpm knip`, `pnpm build`, `git diff --check`, `pnpm lint` (11 advisory warnings, no errors), and all 684 tests across 144 files passed. Hosted Dev/Prod verification follows the code commit.
 - Actual protected Dev CRUD, source immutability, OTP denial, health, OpenAPI and unsigned explicit sender participation verified. Private deletion completed after the platform's signed-upload expiry/drain; all synthetic files were erased and all temporary credentials revoked. See `hosted-crud-verification.md`.
 - Hosted protocol follow-up: preserve `STORAGE_DELETE_PENDING`, `retryAt` and replay-stable `Retry-After`; safely accept authoritative absent storage reservations while retaining upload fences. Updated source passes all 688 tests across 145 files, types, Knip, build and lint (11 advisory warnings, no errors).
+- Final Dev runtime `7259e423c4f6d901e29f4dacc79c85302382b71d` verified structured pending deletion, exact replay and real erasure after `retryAt`. Every synthetic artifact was erased and every temporary credential revoked.
+- Exact artifact promoted without rebuilding to Prod `01M7D3VRK7BN0BMRMHV1TBWH5S`; https://sign.amerged.com health/login/OpenAPI/auth boundaries and the new cron succeeded. Existing Prod records survived additive migrations. See `release-contract-crud-20261114.md` for evidence and manual-testing limits.
