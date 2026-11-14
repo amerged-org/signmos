@@ -6,7 +6,6 @@ import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from "@tanst
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type * as React from "react";
 import { DefaultCatchBoundary } from "@/components/default-catch-boundary";
-import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { NotFound } from "@/components/not-found";
 import { LanguageProvider, useLanguage } from "@/lib/i18n";
 import appCss from "@/styles.css?url";
@@ -86,9 +85,6 @@ function LocalizedDocument({ children }: { children: React.ReactNode }) {
 				<HeadContent />
 			</head>
 			<body>
-				<div className="mx-auto flex max-w-5xl justify-end px-5 pt-2 sm:px-8">
-					<LanguageSwitcher />
-				</div>
 				{children}
 				{import.meta.env.DEV && <TanStackRouterDevtools position="bottom-right" />}
 				{import.meta.env.DEV && <ReactQueryDevtools buttonPosition="bottom-left" />}

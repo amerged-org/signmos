@@ -11,8 +11,8 @@ import {
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { AgenticAccessRequestForm } from "@/components/agentic/agentic-access-request-form";
 import { HistoryRequestForm } from "@/components/history/history-request-form";
+import { BrandHeader } from "@/components/layout/brand-header";
 import { PageHeader, PageShell } from "@/components/layout/page-shell";
-import { Wordmark } from "@/components/layout/wordmark";
 import {
 	type ProductMode,
 	ProductModeNavigation,
@@ -233,7 +233,7 @@ export function StartEnvelopePage({
 		return (
 			<PageShell width="content" center>
 				<div className="mx-auto max-w-2xl text-center">
-					<Wordmark linked={false} />
+					<BrandHeader linked={false} />
 					<h1 className="mt-6 text-balance font-semibold text-4xl text-foreground sm:text-5xl">
 						{taskChooserHeroContent.heading}
 					</h1>

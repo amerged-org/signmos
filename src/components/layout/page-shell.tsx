@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Wordmark } from "@/components/layout/wordmark";
+import { BrandHeader } from "@/components/layout/brand-header";
 import { cn } from "@/lib/utils";
 
 const shellWidths = {
@@ -49,7 +49,7 @@ export function PageHeader({
 }) {
 	return (
 		<header className={cn("space-y-4", align === "center" && "text-center", className)}>
-			{wordmark ? <Wordmark /> : null}
+			{wordmark ? <BrandHeader /> : null}
 			<div className="space-y-3">
 				<h1 className="text-balance font-normal text-[clamp(2.25rem,4vw,3.5rem)] leading-[1.08] tracking-[-0.035em] text-foreground">
 					{title}

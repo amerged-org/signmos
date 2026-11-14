@@ -9,9 +9,9 @@ function WordmarkContent() {
 				alt="amerged"
 				width="195"
 				height="35"
-				className="h-auto w-[156px] sm:w-[176px]"
+				className="h-auto w-[clamp(100px,34vw,156px)] sm:w-[176px]"
 			/>
-			<span className="border-l border-border pl-3 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+			<span className="hidden border-l border-border pl-3 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground min-[360px]:inline">
 				Sign
 			</span>
 		</>

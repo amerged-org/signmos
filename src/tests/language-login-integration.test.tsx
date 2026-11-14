@@ -2,7 +2,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ConsoleLogin } from "@/components/console/console-login";
-import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { LanguageProvider } from "@/lib/i18n";
 
 function renderLogin() {
@@ -11,7 +10,6 @@ function renderLogin() {
 	});
 	return render(
 		<LanguageProvider>
-			<LanguageSwitcher />
 			<QueryClientProvider client={client}>
 				<ConsoleLogin />
 			</QueryClientProvider>
@@ -41,6 +39,12 @@ it("switches languages without losing the login address and restores the choice"
 	);
 	vi.stubGlobal("fetch", fetcher);
 	const view = renderLogin();
+	const brand = screen.getByRole("link", { name: "amerged Sign Startseite" });
+	const header = brand.closest("header");
+	expect(
+		header?.contains(screen.getByRole("navigation", { name: "Sprache / Language / Taal" })),
+	).toBe(true);
+	expect(screen.getAllByRole("navigation", { name: "Sprache / Language / Taal" })).toHaveLength(1);
 	fireEvent.change(screen.getByLabelText("E-Mail-Adresse"), {
 		target: { value: "person@example.com" },
 	});

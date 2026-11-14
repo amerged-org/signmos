@@ -1,8 +1,8 @@
 import { ArrowUpRight } from "lucide-react";
-import { Wordmark } from "@/components/layout/wordmark";
+import { BrandHeader } from "@/components/layout/brand-header";
 
 export function ConsoleBrand() {
-	return <Wordmark />;
+	return <BrandHeader />;
 }
 
 export function ConsoleFooter() {

@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { SignerPage } from "@/components/signing/signer-page";
 import { LanguageProvider } from "@/lib/i18n";
 
@@ -42,7 +41,6 @@ const session = {
 function renderSigner() {
 	return render(
 		<LanguageProvider>
-			<LanguageSwitcher />
 			<SignerPage token="synthetic-token" />
 		</LanguageProvider>,
 	);
@@ -68,6 +66,12 @@ it("keeps entered field values and signature when changing languages", async () 
 	);
 	vi.stubGlobal("fetch", fetcher);
 	renderSigner();
+	const brand = screen.getByRole("link", { name: "amerged Sign Startseite" });
+	const header = brand.closest("header");
+	expect(
+		header?.contains(screen.getByRole("navigation", { name: "Sprache / Language / Taal" })),
+	).toBe(true);
+	expect(screen.getAllByRole("navigation", { name: "Sprache / Language / Taal" })).toHaveLength(1);
 	const company = await screen.findByLabelText("Bedrijf *");
 	fireEvent.change(company, { target: { value: "Voorbeeld BV" } });
 	fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {

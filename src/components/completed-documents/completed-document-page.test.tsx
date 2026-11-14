@@ -128,6 +128,15 @@ describe("CompletedDocumentPage", () => {
 				<CompletedDocumentPage token="test" />
 			</LanguageProvider>,
 		);
+		const brand = screen.getByRole("link", { name: "amerged Sign Startseite" });
+		expect(
+			brand
+				.closest("header")
+				?.contains(screen.getByRole("navigation", { name: "Sprache / Language / Taal" })),
+		).toBe(true);
+		expect(screen.getAllByRole("navigation", { name: "Sprache / Language / Taal" })).toHaveLength(
+			1,
+		);
 		await screen.findByRole("link", { name: "PDF herunterladen" });
 		fireEvent.click(screen.getByRole("button", { name: "EN" }));
 		expect(screen.getByRole("link", { name: "Download PDF" })).toBeTruthy();

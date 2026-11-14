@@ -11,7 +11,7 @@ export function LanguageSwitcher() {
 	return (
 		<nav
 			aria-label="Sprache / Language / Taal"
-			className="flex items-center gap-3 font-mono text-[11px] tracking-wide"
+			className="flex shrink-0 items-center gap-0 font-mono text-[11px] tracking-wide sm:gap-2"
 		>
 			{languages.map(({ code, name }) => (
 				<button

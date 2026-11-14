@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { LanguageProvider } from "@/lib/i18n";
 import { ConsoleLogin } from "./console-login";
 
@@ -59,7 +58,6 @@ it("switches language without clearing the email or changing the login request",
 	render(
 		<QueryClientProvider client={client}>
 			<LanguageProvider>
-				<LanguageSwitcher />
 				<ConsoleLogin />
 			</LanguageProvider>
 		</QueryClientProvider>,

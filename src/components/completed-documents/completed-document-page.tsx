@@ -1,7 +1,7 @@
 import { Download } from "lucide-react";
 import { useEffect, useState } from "react";
+import { BrandHeader } from "@/components/layout/brand-header";
 import { PageShell } from "@/components/layout/page-shell";
-import { Wordmark } from "@/components/layout/wordmark";
 import { LoadingText } from "@/components/patterns/loading-text";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -135,7 +135,7 @@ export function CompletedDocumentPage({ token }: { token: string }) {
 	return (
 		<PageShell width="content">
 			<header className="space-y-7 border-b border-foreground pb-8">
-				<Wordmark />
+				<BrandHeader />
 				{view && (
 					<>
 						<h1 className="font-serif text-4xl font-normal tracking-tight sm:text-5xl">
