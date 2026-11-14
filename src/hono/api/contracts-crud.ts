@@ -100,7 +100,11 @@ function handle(action: Action) {
 					send: send?.success ? send.data : null,
 				}),
 			});
-			if (claim.state !== "execute") return commandClaimResponse(claim);
+			if (claim.state !== "execute")
+				return withDeletionRetryHeader(
+					commandClaimResponse(claim),
+					claim.state === "replay" ? claim.body : undefined,
+				);
 			recordId = claim.recordId;
 			const command = { recordId, email: auth.principal.email };
 			const env = c.env as Env & EmailDeliveryEnv & { DOCUMENTS_BUCKET?: R2Bucket };
@@ -159,7 +163,7 @@ function handle(action: Action) {
 				if (recordId) return reconcileContractCommand(recordId);
 				throw error;
 			}
-			const body = { error: { code: error.code, message: error.message } };
+			const body = contractErrorBody(error);
 			if (recordId)
 				await getDb()
 					.update(agenticCommandRecords)
@@ -177,9 +181,27 @@ function handle(action: Action) {
 	};
 }
 function errorResponse(error: ContractError): Response {
-	return Response.json(
-		{ error: { code: error.code, message: error.message } },
-		{ status: error.status },
-	);
+	const body = contractErrorBody(error);
+	return withDeletionRetryHeader(Response.json(body, { status: error.status }), body);
+}
+function contractErrorBody(error: ContractError) {
+	return { error: { code: error.code, message: error.message, ...error.details } };
+}
+function withDeletionRetryHeader(response: Response, body: unknown): Response {
+	if (!body || typeof body !== "object" || !("error" in body)) return response;
+	const error = body.error;
+	if (
+		!error ||
+		typeof error !== "object" ||
+		!("code" in error) ||
+		error.code !== "STORAGE_DELETE_PENDING" ||
+		!("retryAt" in error) ||
+		typeof error.retryAt !== "string"
+	)
+		return response;
+	const retryAt = Date.parse(error.retryAt);
+	if (Number.isFinite(retryAt))
+		response.headers.set("Retry-After", new Date(Math.ceil(retryAt / 1000) * 1000).toUTCString());
+	return response;
 }
 export default endpoint;

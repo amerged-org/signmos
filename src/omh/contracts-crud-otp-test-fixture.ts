@@ -27,6 +27,7 @@ let browserCsrf: string;
 let afterUploadComplete: (() => Promise<void>) | undefined;
 let failSourceSave = false;
 let loseReservationReceipt = false;
+let deletionRetryAt: string | undefined;
 let budgets: Array<{
 	method: string;
 	path: string;
@@ -186,6 +187,15 @@ async function storageGateway(input: Request) {
 		return Response.json({ state: "completed", transfer_id: transferId });
 	}
 	if (url.pathname === "/v1/deletions/batch") {
+		if (deletionRetryAt)
+			return Response.json({
+				state: "partial",
+				results: body.objects.map(({ objectKey }) => ({
+					object_key: objectKey,
+					state: "pending",
+					retry_at: deletionRetryAt,
+				})),
+			});
 		for (const { objectKey } of body.objects) files.delete(objectKey);
 		return Response.json({
 			state: "completed",
@@ -253,6 +263,7 @@ beforeEach(async () => {
 	afterUploadComplete = undefined;
 	failSourceSave = false;
 	loseReservationReceipt = false;
+	deletionRetryAt = undefined;
 	budgets = [];
 	const session = await scoped(() =>
 		createHistorySessionFromVerifiedIdentity({
@@ -330,4 +341,7 @@ export function failNextSourceSave() {
 }
 export function loseNextReservationReceipt() {
 	loseReservationReceipt = true;
+}
+export function deferDeletionUntil(retryAt?: string) {
+	deletionRetryAt = retryAt;
 }

@@ -74,3 +74,7 @@ The first snapshot implementation required a `contract.definition` audit row tha
 - Production CRUD modules remain below 500 lines and contain no `any`.
 
 Full repository types, complete test suite, lint/build and actual hosted Dev/Prod verification are owned by the parent release workflow and are not claimed by this read-only review. The hosted-budget regressions use the actual private storage SDK protocol against a controlled gateway fixture; they do not substitute for a deployed platform smoke test.
+
+## Hosted deletion protocol follow-up
+
+The deployed smoke exposed normal deferred erasure: signed PUT capabilities remain usable for 300 seconds plus a 30-second drain. The SDK returns `pending` with `retryAt`; the application now retains the deletion intent and returns `STORAGE_DELETE_PENDING` with an absolute, replay-stable `Retry-After`. A fresh command key after the deadline completes erasure. Authoritative per-object `object_not_found` is accepted only as scoped absence; genuine gateway failures remain errors. Independent inspection of the gateway reservation-before-capability protocol, the SDK's awaited reserve-before-PUT flow and the CRUD upload fence supports this treatment. Six independent focused suites, including pending/replay/completion coverage, passed 31 tests. The parent also confirmed real Dev deletion after the deadline, erased both synthetic fixtures and revoked all temporary credentials.

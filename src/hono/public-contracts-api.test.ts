@@ -33,6 +33,24 @@ function output(operation: Operation, status = "200") {
 	return operation.responses[status]?.content?.["application/json"]?.schema;
 }
 
+it("documents pending private erasure and its absolute retry deadline", async () => {
+	const { paths } = await openapi();
+	const operation = paths["/api/contracts/{id}"].delete;
+	expect(output(operation, "503")).toMatchObject({
+		properties: {
+			error: {
+				properties: {
+					retryAt: { type: "string", format: "date-time" },
+					retryable: { type: "boolean" },
+				},
+			},
+		},
+	});
+	expect(operation.responses["503"].headers).toMatchObject({
+		"Retry-After": { schema: { type: "string" } },
+	});
+});
+
 it("retains both existing create-and-send formats and invitation recovery", async () => {
 	const { paths } = await openapi();
 	const create = paths["/api/contracts"].post;

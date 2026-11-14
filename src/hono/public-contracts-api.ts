@@ -63,6 +63,8 @@ const errorSchema = {
 				emailHint: { type: "string" },
 				verificationUrl: { type: "string" },
 				retryAfterSeconds: { type: "integer" },
+				retryAt: { type: "string", format: "date-time" },
+				retryable: { type: "boolean" },
 			},
 		},
 	},
@@ -75,8 +77,24 @@ const errors = Object.fromEntries(
 		409: "Lifecycle, concurrent change or idempotency conflict; reload before a deliberate retry",
 		413: "PDF size, page or field limit exceeded",
 		502: "Email delivery could not be confirmed",
-		503: "Private storage, email or source/final PDF is unavailable",
-	}).map(([code, description]) => [code, response(description, errorSchema)]),
+		503: "Private storage, email or source/final PDF is unavailable; STORAGE_DELETE_PENDING waits for signed uploads to expire",
+	}).map(([code, description]) => [
+		code,
+		{
+			...response(description, errorSchema),
+			...(code === "503"
+				? {
+						headers: {
+							"Retry-After": {
+								schema: { type: "string" },
+								description:
+									"Absolute HTTP date when pending private erasure can be retried with a new Idempotency-Key; preserved on exact replay",
+							},
+						},
+					}
+				: {}),
+		},
+	]),
 );
 
 export function buildContractsPaths() {

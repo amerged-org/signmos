@@ -73,6 +73,7 @@ export class ContractError extends Error {
 		public readonly code: string,
 		message: string,
 		public readonly status: 400 | 404 | 409 | 413 | 502 | 503 = 400,
+		public readonly details?: { retryAt: string; retryable: true },
 	) {
 		super(message);
 		this.name = "ContractError";

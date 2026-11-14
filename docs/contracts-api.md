@@ -32,6 +32,8 @@ Only an active draft can be edited, have its PDF replaced, be deleted or be sent
 
 A draft can retain at most 4,000 distinct private artifact keys, including recorded versions from failed or uncertain uploads. At that limit, another PDF replacement returns `413 SOURCE_VERSION_LIMIT` before uploading. Delete the draft and create a new one with the desired PDF and definition.
 
+Deleting a recently uploaded draft can return `503 STORAGE_DELETE_PENDING` while its signed upload window closes, normally up to about 5½ minutes after upload. The error includes `retryAt` and `retryable: true`; the `Retry-After` header gives the same deadline as an absolute HTTP date. Wait until that deadline, then retry `DELETE` with a **new** `Idempotency-Key`. Reusing the original key replays its original pending response and deadline. The contract remains blocked from sending or editing while deletion is pending, and is marked `deleted` only after private erasure is confirmed.
+
 Use the placeholder definition below for multipart drafts:
 
 ```sh

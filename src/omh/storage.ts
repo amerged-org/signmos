@@ -7,6 +7,15 @@ export interface OmhStorageEnv {
 	OHMYHOST_ENVIRONMENT_ID: string;
 }
 
+export class StorageDeletionPendingError extends Error {
+	readonly code = "storage_delete_pending";
+	readonly retryable = true;
+	constructor(readonly retryAt: string) {
+		super("Private document erasure is waiting for signed uploads to expire");
+		this.name = "StorageDeletionPendingError";
+	}
+}
+
 /** The existing document domain uses only these R2-compatible operations. */
 export function createOmhDocumentsBucket(env: OmhStorageEnv): R2Bucket {
 	const storage = createPrivateStorageClient({
@@ -90,16 +99,29 @@ export function createOmhDocumentsBucket(env: OmhStorageEnv): R2Bucket {
 					})),
 				);
 				const results = await storage.deleteMany({ objects });
-				const incomplete = results.find((result) => result.state !== "completed");
-				if (incomplete) {
+				// A scoped object_not_found means no upload reservation or capability exists.
+				// Callers fence their uploads before deletion; a missing reservation is already absent.
+				const failed = results.find(
+					(result) => result.state === "failed" && result.code !== "object_not_found",
+				);
+				if (failed?.state === "failed") {
 					throw Object.assign(
 						new Error("Private document deletion has not completed; repeat the same request"),
 						{
-							code: incomplete.state === "pending" ? "storage_delete_pending" : incomplete.code,
-							retryable: incomplete.state === "pending" || incomplete.retryable,
+							code: failed.code,
+							retryable: failed.retryable,
 						},
 					);
 				}
+				const retryAt = results.reduce<string | null>(
+					(latest, result) =>
+						result.state === "pending" &&
+						(latest === null || Date.parse(result.retryAt) > Date.parse(latest))
+							? result.retryAt
+							: latest,
+					null,
+				);
+				if (retryAt) throw new StorageDeletionPendingError(retryAt);
 			}
 		},
 	};

@@ -15,6 +15,7 @@ import {
 } from "./contracts-draft-store";
 import { type StoredContractSummary, summaryForDraft } from "./contracts-drafts";
 import { ContractError } from "./contracts-schema";
+import { StorageDeletionPendingError } from "./storage";
 
 interface ContractSigningLink {
 	recipientId: string;
@@ -188,7 +189,14 @@ export async function deleteClaimedContractDraft(
 		);
 	try {
 		if (keys.length) await input.documentsBucket.delete(keys);
-	} catch {
+	} catch (error) {
+		if (error instanceof StorageDeletionPendingError)
+			throw new ContractError(
+				"STORAGE_DELETE_PENDING",
+				"Private erasure is waiting for signed uploads to expire. After retryAt, retry deletion with a new Idempotency-Key.",
+				503,
+				{ retryAt: error.retryAt, retryable: true },
+			);
 		throw new ContractError(
 			"STORAGE_UNAVAILABLE",
 			"Document erasure could not be confirmed; retry deletion with a new key",
