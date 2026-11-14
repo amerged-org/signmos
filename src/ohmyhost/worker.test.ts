@@ -1,6 +1,9 @@
 import worker from "./worker";
 
-const mocks = vi.hoisted(() => ({ withDatabase: vi.fn(), processOne: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	withDatabase: vi.fn(),
+	processOne: vi.fn().mockResolvedValue({ processed: 3, stopped: false }),
+}));
 vi.mock("@/db/setup", () => ({ withDatabase: mocks.withDatabase }));
 vi.mock("@/omh/contracts-outbox", () => ({ processContractInvitations: mocks.processOne }));
 

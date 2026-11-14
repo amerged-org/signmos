@@ -1,5 +1,5 @@
 import { Download, FileText, MessageSquare, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Activity, useCallback, useEffect, useRef, useState } from "react";
 import { pdfPage } from "@/components/envelopes/field-placement-workspace";
 import { PageHeader, PageShell } from "@/components/layout/page-shell";
 import { LoadingText } from "@/components/patterns/loading-text";
@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLanguage } from "@/lib/i18n";
 import { type CompleteSigningPayload, PartnerSignatureForm } from "./partner-signature-form";
-import { signingCopy, signingError } from "./signing-copy";
+import { type SigningLanguage, signingCopy, signingError } from "./signing-copy";
 import {
 	type SignerField,
 	type SignerPreviewField,
@@ -20,6 +20,7 @@ import {
 	SigningDocumentPreview,
 	signerFieldLabel,
 } from "./signing-document-preview";
+import { SigningVerificationPage } from "./signing-verification-page";
 
 interface CompletedDocumentLink {
 	url: string;
@@ -28,6 +29,7 @@ interface CompletedDocumentLink {
 
 interface SigningError {
 	code?: string;
+	emailHint?: string;
 	verificationUrl?: string;
 }
 
@@ -37,9 +39,7 @@ export function SignerPage(props: SignerPageProps) {
 	const { language } = useLanguage();
 	const copy = signingCopy[language];
 	const historyMode = "historyEnvelopeId" in props;
-	const endpoint = historyMode
-		? `/api/history/documents/${encodeURIComponent(props.historyEnvelopeId)}/signing`
-		: `/api/signing/${encodeURIComponent(props.token)}`;
+	const endpoint = signingEndpoint(props);
 	const [session, setSession] = useState<SignerSession | null>(null);
 	const [completedDocument, setCompletedDocument] = useState<CompletedDocumentLink | null>(null);
 	const [changeComment, setChangeComment] = useState("");
@@ -88,12 +88,28 @@ export function SignerPage(props: SignerPageProps) {
 		};
 	}, [refreshSigningState]);
 
+	async function recoverEmailVerification(response: Response) {
+		if (response.status !== 403) return false;
+		const body = (await response
+			.clone()
+			.json()
+			.catch(() => ({}))) as {
+			error?: SigningError;
+		};
+		if (!personalVerification(props, body.error ?? null)) return false;
+		setError(body.error ?? null);
+		setMessage(null);
+		setCompletionError(undefined);
+		return true;
+	}
+
 	async function completeSigning(payload: CompleteSigningPayload) {
 		const response = await fetch(`${endpoint}/complete`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
 		});
+		if (await recoverEmailVerification(response)) return;
 		if (response.ok) {
 			setCompletionError(undefined);
 			setMessage("saved");
@@ -114,6 +130,7 @@ export function SignerPage(props: SignerPageProps) {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ reason, comment: comment || undefined }),
 		});
+		if (await recoverEmailVerification(response)) return;
 		setMessage(response.ok ? "declined" : "declineFailed");
 		if (response.ok && historyMode) await refreshSigningState();
 	}
@@ -125,6 +142,7 @@ export function SignerPage(props: SignerPageProps) {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ comment: changeComment }),
 		});
+		if (await recoverEmailVerification(response)) return;
 		if (response.ok) setChangeRequested(true);
 		setMessage(response.ok ? "changeSent" : "changeFailed");
 		if (response.ok && historyMode) await refreshSigningState();
@@ -179,7 +197,8 @@ export function SignerPage(props: SignerPageProps) {
 		}
 	}
 
-	return (
+	const verification = personalVerification(props, error);
+	const content = (
 		<PageShell width="wide">
 			<PageHeader title={copy.pageTitle} />
 			{session && (
@@ -190,16 +209,7 @@ export function SignerPage(props: SignerPageProps) {
 					{copy.jump}
 				</a>
 			)}
-			{error && (
-				<Alert variant="destructive" role="alert">
-					<AlertTitle>{signingError(language, error.code)}</AlertTitle>
-					{error.verificationUrl && (
-						<AlertDescription>
-							<TextLink href={error.verificationUrl}>{copy.verifyEmail}</TextLink>
-						</AlertDescription>
-					)}
-				</Alert>
-			)}
+			{error && <SigningAccessError error={error} language={language} />}
 			{completedDocument && (
 				<Panel>
 					<div className="flex flex-wrap items-start justify-between gap-4">
@@ -346,6 +356,49 @@ export function SignerPage(props: SignerPageProps) {
 			)}
 		</PageShell>
 	);
+	return (
+		<>
+			{verification && (
+				<SigningVerificationPage
+					token={verification.token}
+					emailHint={verification.emailHint}
+					onVerified={() => void refreshSigningState()}
+				/>
+			)}
+			<Activity mode={verification ? "hidden" : "visible"}>{content}</Activity>
+		</>
+	);
+}
+
+function signingEndpoint(props: SignerPageProps) {
+	return "historyEnvelopeId" in props
+		? `/api/history/documents/${encodeURIComponent(props.historyEnvelopeId)}/signing`
+		: `/api/signing/${encodeURIComponent(props.token)}`;
+}
+
+function SigningAccessError({
+	error,
+	language,
+}: {
+	error: SigningError;
+	language: SigningLanguage;
+}) {
+	return (
+		<Alert variant="destructive" role="alert">
+			<AlertTitle>{signingError(language, error.code)}</AlertTitle>
+			{error.verificationUrl && (
+				<AlertDescription>
+					<TextLink href={error.verificationUrl}>{signingCopy[language].verifyEmail}</TextLink>
+				</AlertDescription>
+			)}
+		</Alert>
+	);
+}
+
+function personalVerification(props: SignerPageProps, error: SigningError | null) {
+	return "token" in props && error?.code === "PARTNER_VERIFICATION_REQUIRED"
+		? { token: props.token, emailHint: error.emailHint }
+		: null;
 }
 
 function moveSessionField(session: SignerSession, nextField: SignerField): SignerSession {

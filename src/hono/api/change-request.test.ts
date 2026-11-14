@@ -5,7 +5,9 @@ import {
 	envelopes,
 	signerTokens,
 } from "@/db/envelope";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import { apiHono } from "@/hono/api";
+import { signerEmailRequest, signerEmailSessionFixtures } from "@/test/signer-email-fixture";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -50,6 +52,8 @@ const state = vi.hoisted(() => ({
 }));
 
 function selectRows(table: unknown) {
+	if (table === signerEmailSessions)
+		return signerEmailSessionFixtures(state.tokens, state.recipients);
 	if (table === state.envelopesTable) return state.envelopes;
 	if (table === state.recipientsTable) return state.recipients;
 	if (table === state.tokensTable) return state.tokens;
@@ -137,14 +141,18 @@ describe("partner change requests", () => {
 		// - A change request keeps the recipient in sent state and moves the envelope to changes_requested.
 		// - The sender notification is represented by an email_send_records row with a fallback upload URL.
 		// - Comment history beyond the single request comment is intentionally out of scope.
-		const response = await apiHono.request("/api/signing/verified-token/change-request", {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"x-now": "2026-05-20T08:00:00.000Z",
+		const response = await signerEmailRequest(
+			apiHono,
+			"/api/signing/verified-token/change-request",
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-now": "2026-05-20T08:00:00.000Z",
+				},
+				body: JSON.stringify({ comment: "Please update the billing address." }),
 			},
-			body: JSON.stringify({ comment: "Please update the billing address." }),
-		});
+		);
 
 		expect(response.status).toBe(200);
 		await expect(response.json()).resolves.toEqual({
@@ -191,7 +199,8 @@ describe("partner change requests", () => {
 			}),
 		);
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/verified-token/change-request",
 			{
 				method: "POST",
@@ -236,14 +245,18 @@ describe("partner change requests", () => {
 	});
 
 	it("requires a change request comment", async () => {
-		const response = await apiHono.request("/api/signing/verified-token/change-request", {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"x-now": "2026-05-20T08:00:00.000Z",
+		const response = await signerEmailRequest(
+			apiHono,
+			"/api/signing/verified-token/change-request",
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-now": "2026-05-20T08:00:00.000Z",
+				},
+				body: JSON.stringify({ comment: "" }),
 			},
-			body: JSON.stringify({ comment: "" }),
-		});
+		);
 
 		expect(response.status).toBe(400);
 		await expect(response.json()).resolves.toEqual({
@@ -260,7 +273,7 @@ describe("partner change requests", () => {
 	it("blocks completion while the sender revision is pending", async () => {
 		state.envelopes[0] = { ...state.envelopes[0], status: "changes_requested" };
 
-		const response = await apiHono.request("/api/signing/verified-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/verified-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",

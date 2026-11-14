@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { LanguageProvider, useLanguage } from "@/lib/i18n";
 import { CompletedDocumentPage } from "./completed-document-page";
 
+function renderPage(children: React.ReactNode) {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
+}
+
 describe("CompletedDocumentPage", () => {
 	afterEach(() => {
+		cleanup();
 		localStorage.clear();
 		// biome-ignore lint/suspicious/noDocumentCookie: Clear the browser preference created by this test.
 		document.cookie = "amerged_sign_language=; Max-Age=0; Path=/";
@@ -72,7 +79,7 @@ describe("CompletedDocumentPage", () => {
 			),
 		);
 
-		render(<CompletedDocumentPage token="90000000-0000-4000-8000-000000000001" />);
+		renderPage(<CompletedDocumentPage token="90000000-0000-4000-8000-000000000001" />);
 
 		await screen.findByText("Vertrag abgeschlossen");
 		expect(screen.getByText("Unterzeichnet von")).toBeTruthy();
@@ -122,7 +129,7 @@ describe("CompletedDocumentPage", () => {
 				</>
 			);
 		}
-		render(
+		renderPage(
 			<LanguageProvider>
 				<Switch />
 				<CompletedDocumentPage token="test" />
@@ -142,5 +149,67 @@ describe("CompletedDocumentPage", () => {
 		expect(screen.getByRole("link", { name: "Download PDF" })).toBeTruthy();
 		fireEvent.click(screen.getByRole("button", { name: "NL" }));
 		expect(screen.getByRole("link", { name: "PDF downloaden" })).toBeTruthy();
+	});
+	it("verifies an email code before revealing the completed document", async () => {
+		let verified = false;
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith("/email-code/request")) {
+				return Response.json({
+					data: { emailHint: "a•••@example.com", expiresInSeconds: 600, retryAfterSeconds: 60 },
+				});
+			}
+			if (url.endsWith("/email-code/verify")) {
+				verified = true;
+				return Response.json({ data: { verified: true, signingUrl: "/signing/final-token" } });
+			}
+			if (!verified) {
+				return Response.json(
+					{
+						error: {
+							code: "PARTNER_VERIFICATION_REQUIRED",
+							emailHint: "a•••@example.com",
+							verificationUrl: "/signing-verifications/final-token",
+							message: "Internal message",
+						},
+					},
+					{ status: 403 },
+				);
+			}
+			return Response.json({
+				data: {
+					envelopeId: "fixture",
+					status: "completed",
+					finalPdf: {
+						downloadUrl: "/api/final-documents/final-token/pdf",
+						byteSize: 100,
+						sha256: "hash",
+					},
+					parties: [],
+					history: [],
+				},
+			});
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		renderPage(<CompletedDocumentPage token="final-token" />);
+
+		fireEvent.click(await screen.findByRole("button", { name: "Code senden" }));
+		expect(screen.queryByRole("link", { name: "PDF herunterladen" })).toBeNull();
+		expect(screen.queryByText("Vertrag nicht verfügbar.")).toBeNull();
+		fireEvent.change(await screen.findByLabelText("6-stelliger Code"), {
+			target: { value: "123456" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+
+		expect(
+			(await screen.findByRole("link", { name: "PDF herunterladen" })).getAttribute("href"),
+		).toBe("/api/final-documents/final-token/pdf");
+		await waitFor(() =>
+			expect(fetchMock).toHaveBeenLastCalledWith("/api/final-documents/final-token"),
+		);
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/signing/final-token/email-code/verify",
+			expect.objectContaining({ method: "POST", body: JSON.stringify({ code: "123456" }) }),
+		);
 	});
 });

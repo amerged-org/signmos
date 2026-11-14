@@ -109,6 +109,11 @@ export async function readMultipartContract(request: Request): Promise<Multipart
 	const definition = form.get("definition");
 	if (!pdf || typeof pdf === "string" || !definition)
 		throw new ContractError("INVALID_CONTRACT", "Provide a PDF file and JSON definition");
+	if (/\.html?$/i.test(pdf.name) || pdf.type.toLowerCase().startsWith("text/html"))
+		throw new ContractError(
+			"HTML_RENDERING_UNAVAILABLE",
+			"HTML upload is not available; provide a PDF and JSON field definitions",
+		);
 	if (!/\.pdf$/i.test(pdf.name) || pdf.size > MAX_CONTRACT_PDF_BYTES || pdf.size === 0)
 		throw new ContractError(
 			pdf.size > MAX_CONTRACT_PDF_BYTES ? "SOURCE_PDF_TOO_LARGE" : "INVALID_SOURCE_PDF",

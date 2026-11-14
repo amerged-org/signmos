@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MAX_DOCUMENT_FIELDS, MAX_SOURCE_PDF_BYTES } from "@/db/envelope/pdf-policy-limits";
+import type { ContractDefinition } from "./contracts-draft-schema";
 
 export const MAX_CONTRACT_PDF_BYTES = MAX_SOURCE_PDF_BYTES;
 export const MAX_CONTRACT_REQUEST_BYTES = Math.ceil(MAX_CONTRACT_PDF_BYTES / 3) * 4 + 64 * 1024;
@@ -57,6 +58,7 @@ export type CreateContractRequest = z.infer<typeof CreateContractSchema>;
 export type ContractField = z.infer<typeof ContractFieldSchema>;
 
 export interface ContractSummary {
+	definition?: ContractDefinition;
 	id: string;
 	title: string;
 	status: string;
@@ -70,7 +72,7 @@ export class ContractError extends Error {
 	constructor(
 		public readonly code: string,
 		message: string,
-		public readonly status: 400 | 409 | 413 | 502 | 503 = 400,
+		public readonly status: 400 | 404 | 409 | 413 | 502 | 503 = 400,
 	) {
 		super(message);
 		this.name = "ContractError";

@@ -1,4 +1,5 @@
 import { eq, type SQL, sql } from "drizzle-orm";
+import { finalDeliveryIntent, refreshFinalDeliveryLinks } from "@/db/final-delivery";
 import { getDb } from "@/db/setup";
 import { envelopeArtifactVersions } from "./artifact-versions";
 import { buildCertificateMaterial, renderFinalPdf } from "./final-pdf-renderer";
@@ -41,14 +42,12 @@ interface FinalizeEnvelopeOptions {
 	snapshot?: SigningFinalizationSnapshot;
 	completion?: { token: SignerToken; now: Date; owner?: string; recipientEmail?: string };
 }
-
 interface FinalDocumentArtifact {
 	bytes: Uint8Array;
 	sha256: string;
 	byteSize: number;
 	contentType: "application/pdf";
 }
-
 export interface EnvelopeFinalizationStatus {
 	envelopeId: string;
 	status: Envelope["status"];
@@ -100,7 +99,6 @@ export async function finalizeCompletedEnvelope(
 		commitFinalArtifact(envelopeId, r2Key, artifact, snapshot, options.completion),
 	);
 }
-
 export interface SigningFinalizationSnapshot {
 	existing: FinalDocument | null;
 	sourceDocument: SourceDocument | null;
@@ -155,7 +153,6 @@ export async function getSigningFinalizationSnapshot(
 		senderTokens: senderTokens.map((row) => SenderVerificationTokenSchema.parse(row)),
 	};
 }
-
 export function finalizationSnapshotProjection(
 	envelopeId: ReturnType<typeof sql>,
 ): ReturnType<typeof sql<Record<string, unknown>>> {
@@ -168,7 +165,6 @@ export function finalizationSnapshotProjection(
 		'tokens', coalesce((select jsonb_agg(to_jsonb(t)) from (select * from signer_tokens where envelope_id = ${envelopeId} limit 100) t), '[]'::jsonb),
 		'senderTokens', coalesce((select jsonb_agg(to_jsonb(t)) from (select * from sender_verification_tokens where envelope_id = ${envelopeId} limit 100) t), '[]'::jsonb))`;
 }
-
 export function parseFinalizationSnapshotProjection(
 	data: Record<string, unknown>,
 ): SigningFinalizationSnapshot {
@@ -273,7 +269,7 @@ async function commitFinalArtifact(
 	if (senderToken)
 		notificationWrites.push(
 			signingStatement(sql`insert into sender_verification_email_records (envelope_id, token_id, email, kind, fallback_url)
-		select ${envelopeId}, ${senderToken.id}, ${senderToken.email}, 'completion', ${`/completed-documents/${documentId}`}
+		select ${envelopeId}, ${senderToken.id}, ${senderToken.email}, 'completion', ${`/my-documents/${envelopeId}`}
 		from final_documents where id = ${documentId}`),
 		);
 	const results = await signingBatch([
@@ -295,6 +291,8 @@ async function commitFinalArtifact(
 			and exists (select 1 from final_documents f where f.envelope_id = ${envelopeId})`),
 				]
 			: []),
+		finalDeliveryIntent(documentId, artifact.sha256),
+		refreshFinalDeliveryLinks(documentId),
 		signingStatement(sql`select f.* from final_documents f join envelopes e on e.id = f.envelope_id
 			where e.id = ${envelopeId} and ${completion ? sql`e.status = 'completed' and ${guard}` : guard} limit 1`),
 	]);
@@ -330,19 +328,26 @@ export async function regenerateFinalDocumentArtifact(
 		httpMetadata: { contentType: artifact.contentType },
 	});
 	if (finalDocument.id) {
-		const updated = await db
-			.update(finalDocuments)
-			.set({
-				r2Key,
-				sha256: artifact.sha256,
-				byteSize: artifact.byteSize,
-				contentType: artifact.contentType,
-			})
-			.where(
-				sql`${finalDocuments.id} = ${finalDocument.id} and ${finalDocuments.r2Key} = ${finalDocument.r2Key} and ${finalArtifactGuard(finalDocument.envelopeId, snapshot, undefined, options.access)} and exists (select 1 from envelopes e where e.id = ${finalDocument.envelopeId} and e.status = 'completed')`,
-			)
-			.returning();
-		if (updated.length !== 1) throw new Error("Document changed during final PDF repair");
+		const updated = await signingBatch([
+			{
+				table: finalDocuments,
+				query: db
+					.update(finalDocuments)
+					.set({
+						r2Key,
+						sha256: artifact.sha256,
+						byteSize: artifact.byteSize,
+						contentType: artifact.contentType,
+					})
+					.where(
+						sql`${finalDocuments.id} = ${finalDocument.id} and ${finalDocuments.r2Key} = ${finalDocument.r2Key} and ${finalArtifactGuard(finalDocument.envelopeId, snapshot, undefined, options.access)} and exists (select 1 from envelopes e where e.id = ${finalDocument.envelopeId} and e.status = 'completed')`,
+					)
+					.returning(),
+			},
+			finalDeliveryIntent(finalDocument.id, artifact.sha256),
+			refreshFinalDeliveryLinks(finalDocument.id),
+		]);
+		if (updated[0]?.length !== 1) throw new Error("Document changed during final PDF repair");
 	}
 	return {
 		document: {
@@ -467,11 +472,9 @@ export async function getFinalDocument(envelopeId: string): Promise<FinalDocumen
 export async function getSignerFinalDocument(token: SignerToken): Promise<FinalDocument | null> {
 	return getFinalDocument(token.envelopeId);
 }
-
 function latestSourceDocument(documents: SourceDocument[]): SourceDocument | null {
 	return [...documents].sort((left, right) => right.version - left.version)[0] ?? null;
 }
-
 function latestSignerToken(
 	tokens: ReturnType<typeof SignerTokenSchema.parse>[],
 	recipientId: string,
@@ -480,7 +483,6 @@ function latestSignerToken(
 		.filter((token) => token.status === "active" && token.recipientId === recipientId)
 		.sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0];
 }
-
 function latestVerifiedSenderToken(
 	tokens: ReturnType<typeof SenderVerificationTokenSchema.parse>[],
 ) {
@@ -488,7 +490,6 @@ function latestVerifiedSenderToken(
 		.filter((token) => token.status === "verified")
 		.sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0];
 }
-
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
 	const buffer = new ArrayBuffer(bytes.byteLength);
 	new Uint8Array(buffer).set(bytes);

@@ -10,6 +10,7 @@ import {
 	signatureProfiles,
 	signerTokens,
 } from "@/db/envelope";
+import { contractFinalDeliveryOutbox } from "@/db/final-delivery/table";
 import { hashHistoryCredential } from "@/db/history-access/request";
 import { historySessions } from "@/db/history-access/table";
 import { apiHono } from "@/hono/api";
@@ -243,7 +244,10 @@ describe("agent partner completion", () => {
 		expect(new Uint8Array(await partnerPdf.arrayBuffer())).toEqual(
 			new Uint8Array(await creatorPdf.arrayBuffer()),
 		);
-		expect(fetchMock).toHaveBeenCalledTimes(3);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		// Final success only queues the two protected access mails; the scheduler sends them later.
+		expect(rows(contractFinalDeliveryOutbox)).toHaveLength(2);
+		expect(rows(contractFinalDeliveryOutbox).every((row) => row.status === "queued")).toBe(true);
 		expect(JSON.stringify(rows(agenticSecurityEvents))).not.toContain(partnerToken);
 		expect(JSON.stringify(rows(agenticSecurityEvents))).not.toContain(processToken);
 	});

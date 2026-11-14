@@ -9,15 +9,16 @@ import { resolveAdminRequest } from "@/omh/auth";
 import { getContract, getContractFinalPdf, listContracts } from "@/omh/contracts";
 import { claimContractCommand, contractCommandPrincipal } from "@/omh/contracts-command";
 import { createAndSendClaimedContract } from "@/omh/contracts-create";
+import { readContractJson } from "@/omh/contracts-draft-schema";
 import { type MultipartContractRequest, readMultipartContract } from "@/omh/contracts-multipart";
 import { retryContractInvitations } from "@/omh/contracts-outbox";
 import {
 	ContractError,
 	type CreateContractRequest,
 	CreateContractSchema,
-	MAX_CONTRACT_REQUEST_BYTES,
 } from "@/omh/contracts-schema";
 import { commandClaimResponse } from "./agent-v1-command-helpers";
+import contractsCrudEndpoint from "./contracts-crud";
 
 const contractsEndpoint = createHono();
 const ContractIdSchema = z.uuid();
@@ -26,6 +27,8 @@ contractsEndpoint.use("*", async (c, next) => {
 	c.header("cache-control", "private, no-store");
 	await next();
 });
+
+contractsEndpoint.route("/", contractsCrudEndpoint);
 
 contractsEndpoint.get("/", async (c) => {
 	const auth = await resolveAdminRequest(c.req.raw, c.env, { allowBearer: true });
@@ -202,32 +205,6 @@ async function completeFailedCommand(recordId: string, error: unknown): Promise<
 		})
 		.where(eq(agenticCommandRecords.id, recordId));
 	return Response.json(body, { status: known.status });
-}
-
-async function readContractJson(request: Request): Promise<unknown> {
-	if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json")
-		throw new ContractError("INVALID_CONTRACT", "Use Content-Type: application/json");
-	const reader = request.body?.getReader();
-	if (!reader) throw new ContractError("INVALID_CONTRACT", "A request body is required");
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	for (;;) {
-		const result = await reader.read();
-		if (result.done) break;
-		size += result.value.byteLength;
-		if (size > MAX_CONTRACT_REQUEST_BYTES) {
-			await reader.cancel();
-			throw new ContractError("SOURCE_PDF_TOO_LARGE", "The contract request is too large", 413);
-		}
-		chunks.push(result.value);
-	}
-	const bytes = new Uint8Array(size);
-	let offset = 0;
-	for (const chunk of chunks) {
-		bytes.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
 }
 
 function notFound(): Response {

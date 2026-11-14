@@ -189,7 +189,7 @@ it("does not resend after the database commits but the receipt is lost", async (
 	const envelope = await fixture(1);
 	lostReceipt = true;
 	await scoped(() => processContractInvitations(env));
-	expect(calls).toBe(4);
+	expect(calls).toBe(3);
 	expect(
 		(
 			await database.query<{ status: string }>(

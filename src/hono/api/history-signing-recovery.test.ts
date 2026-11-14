@@ -430,7 +430,7 @@ describe("history-session signer recovery", () => {
 		expect(tableRows("fieldValues")).toHaveLength(0);
 	});
 
-	it("keeps the existing verified invitation-link contract unchanged", async () => {
+	it("requires a new email proof for legacy verified invitation links", async () => {
 		Object.assign(tableRows("tokens")[0] ?? {}, {
 			verifiedAt: new Date("2026-07-16T08:10:00.000Z"),
 			expiresAt: new Date("2026-07-18T08:10:00.000Z"),
@@ -438,15 +438,15 @@ describe("history-session signer recovery", () => {
 		const response = await apiHono.request(`/api/signing/${tokenValue}`, {
 			headers: { "x-now": now },
 		});
-		expect(response.status).toBe(200);
+		expect(response.status).toBe(403);
 		const body = await response.json();
 		expect(body).toEqual({
-			data: expect.objectContaining({
-				sourceDocument: expect.objectContaining({
-					downloadUrl: `/api/signing/${tokenValue}/source-pdf`,
-				}),
+			error: expect.objectContaining({
+				code: "PARTNER_VERIFICATION_REQUIRED",
+				verificationUrl: `/signing-verifications/${tokenValue}`,
 			}),
 		});
+		expect(body).not.toHaveProperty("data");
 	});
 
 	it("returns tokenless completed links and audits the history final-PDF download", async () => {

@@ -7,6 +7,7 @@ import type {
 import { PDFDocument } from "pdf-lib";
 import { withDatabase } from "@/db/setup";
 import { apiHono } from "@/hono/api";
+import { signerEmailTestCookie, signerEmailTestHash } from "@/test/signer-email-fixture";
 import { controlEnvelope } from "./controls";
 import { sendEnvelope } from "./delivery";
 import { addFields, addRecipients } from "./queries";
@@ -24,6 +25,7 @@ let tombstones: Set<string>;
 let failErasure = false;
 let calls: { query: number; transaction: number; files: number; mail: number };
 let beforeMail: (() => Promise<void>) | undefined;
+let beforeRecord: (() => Promise<void>) | undefined;
 let beforePut: (() => Promise<void>) | undefined;
 let beforeGet: (() => Promise<void>) | undefined;
 let statements: CustomerDatabaseQuery[];
@@ -54,6 +56,8 @@ const binding: CustomerDatabaseBinding = {
 	transaction: async (raw) => {
 		calls.transaction += 1;
 		const queries = raw as CustomerDatabaseQuery[];
+		if (queries.some((query) => query.text.includes("signing-record-guard")))
+			await beforeRecord?.();
 		expect(queries.length).toBeLessThanOrEqual(25);
 		statements.push(...queries);
 		try {
@@ -105,7 +109,11 @@ const env = {
 } as unknown as Env;
 function request(path: string, init: RequestInit = {}) {
 	return withDatabase({ OHMYHOST_DATABASE: binding }, async () =>
-		apiHono.request(path, { ...init, headers: { "x-now": now, ...init.headers } }, env),
+		apiHono.request(
+			path,
+			{ ...init, headers: { "x-now": now, cookie: signerEmailTestCookie, ...init.headers } },
+			env,
+		),
 	);
 }
 function resetCalls() {
@@ -149,6 +157,7 @@ beforeEach(async () => {
 	tombstones = new Set();
 	failErasure = false;
 	beforeMail = undefined;
+	beforeRecord = undefined;
 	beforePut = undefined;
 	beforeGet = undefined;
 	const pdf = await PDFDocument.create();
@@ -168,6 +177,11 @@ beforeEach(async () => {
 	await postgres.query(
 		"INSERT INTO signer_tokens(id,envelope_id,recipient_id,token,expires_at,verified_at) VALUES($1,$2,$3,$4,'2026-10-28T14:00:00Z',$5)",
 		[tokenId, envelopeId, recipientId, token, now],
+	);
+
+	await postgres.query(
+		"INSERT INTO signer_email_sessions(token_id,envelope_id,recipient_id,email,session_hash,expires_at,created_at) VALUES($1,$2,$3,'ada@example.com',$4,'2026-10-28T14:00:00Z',$5)",
+		[tokenId, envelopeId, recipientId, signerEmailTestHash, now],
 	);
 	await postgres.query(
 		"INSERT INTO source_documents(id,envelope_id,r2_key,sha256,byte_size,content_type,uploaded_by) VALUES($1,$2,'source/v1.pdf',repeat('a',64),$3,'application/pdf','owner@example.com')",
@@ -314,8 +328,8 @@ it.each([
 	const response = await complete(remember);
 	expect(await response.json()).toMatchObject({ data: { envelopeStatus: "completed" } });
 	expect(response.status).toBe(200);
-	expect(calls).toEqual({ query: 1, transaction: 3, files: 5, mail: 1 });
-	expect(count()).toBe(10);
+	expect(calls).toEqual({ query: 1, transaction: 3, files: 5, mail: 0 });
+	expect(count()).toBe(9);
 	expect(statements.every((query) => query.values.length <= 100)).toBe(true);
 	expect((await postgres.query("SELECT status FROM envelopes")).rows).toEqual([
 		{ status: "completed" },
@@ -334,6 +348,25 @@ it.each([
 	}
 });
 
+it("accepts a durable partial signature even when its progress email fails", async () => {
+	await postgres.query(
+		"INSERT INTO envelope_recipients(envelope_id,name,email,status) VALUES($1,'Later','later@example.com','sent')",
+		[envelopeId],
+	);
+	vi.stubGlobal("fetch", async () => {
+		throw new Error("mail unavailable");
+	});
+	const response = await complete();
+	expect(response.status).toBe(200);
+	expect(await response.json()).toMatchObject({
+		data: { envelopeStatus: "sent", recipientStatus: "completed" },
+	});
+	expect(
+		(await postgres.query("SELECT status FROM envelope_recipients WHERE id=$1", [recipientId]))
+			.rows,
+	).toEqual([{ status: "completed" }]);
+});
+
 it.each([
 	"token-before-save",
 	"owner-before-save",
@@ -350,7 +383,7 @@ it.each([
 		if (scenario.startsWith("expired"))
 			await postgres.exec("UPDATE envelopes SET status='expired'");
 	};
-	if (scenario.endsWith("save")) beforeMail = change;
+	if (scenario.endsWith("save")) beforeRecord = change;
 	else beforePut = change;
 	const response = await complete(true);
 	expect(response.status).toBe(scenario.endsWith("save") ? 409 : 503);
@@ -386,7 +419,7 @@ it.each([
 			statements = originalStatements;
 		}
 	};
-	if (scenario === "before-manifest") beforeMail = erase;
+	if (scenario === "before-manifest") beforeGet = erase;
 	if (scenario === "after-manifest") beforePut = erase;
 	if (scenario === "failed-erasure") {
 		failErasure = true;

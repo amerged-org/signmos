@@ -11,8 +11,10 @@ import {
 	signerTokens,
 	sourceDocuments,
 } from "@/db/envelope";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import { apiHono } from "@/hono/api";
 import { pdfFixtureBytes } from "@/test/pdf-fixtures";
+import { signerEmailRequest, signerEmailSessionFixtures } from "@/test/signer-email-fixture";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -113,6 +115,8 @@ const state = vi.hoisted(() => ({
 }));
 
 function selectRows(table: unknown) {
+	if (table === signerEmailSessions)
+		return signerEmailSessionFixtures(state.tokens, state.recipients);
 	if (table === state.tokensTable) return state.tokens;
 	if (table === state.envelopesTable) return state.envelopes;
 	if (table === state.recipientsTable) return state.recipients;
@@ -322,7 +326,7 @@ describe("signing flow API", () => {
 			completedAt: new Date("2026-05-20T07:07:00.000Z"),
 		});
 
-		const response = await apiHono.request("/api/signing/valid-token", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token", {
 			headers: { "x-now": "2026-05-20T07:03:00.000Z" },
 		});
 
@@ -378,7 +382,8 @@ describe("signing flow API", () => {
 			signingMode: "only_me",
 		};
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/fields/50000000-0000-4000-8000-000000000001",
 			{
 				method: "PATCH",
@@ -431,7 +436,7 @@ describe("signing flow API", () => {
 			},
 		);
 
-		const response = await apiHono.request("/api/signing/valid-token", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token", {
 			headers: { "x-now": "2026-05-20T07:03:00.000Z" },
 		});
 
@@ -452,7 +457,8 @@ describe("signing flow API", () => {
 	});
 
 	it("downloads the current source PDF for a verified partner", async () => {
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/source-pdf",
 			{
 				headers: { "x-now": "2026-05-20T07:03:00.000Z" },
@@ -472,7 +478,7 @@ describe("signing flow API", () => {
 	});
 
 	it("completes typed signature and date fields while other recipients remain outstanding", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -538,7 +544,8 @@ describe("signing flow API", () => {
 			sentBy: "sender@example.com",
 		};
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/complete",
 			{
 				method: "POST",
@@ -610,7 +617,8 @@ describe("signing flow API", () => {
 			sentBy: "sender@example.com",
 		};
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/complete",
 			{
 				method: "POST",
@@ -643,7 +651,7 @@ describe("signing flow API", () => {
 	});
 
 	it("completes signing with a drawn signature payload", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -676,7 +684,7 @@ describe("signing flow API", () => {
 	});
 
 	it("ignores future date payloads and stores the controlled signing date", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -705,7 +713,7 @@ describe("signing flow API", () => {
 	});
 
 	it("remembers a typed partner signature only when explicit consent is selected", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -738,7 +746,7 @@ describe("signing flow API", () => {
 	});
 
 	it("remembers a drawn partner signature with the reusable SVG path", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -831,7 +839,8 @@ describe("signing flow API", () => {
 		const sourcePdf = pdfFixtureBytes("Sender-first agreement");
 		state.sourceDocuments[0] = { ...state.sourceDocuments[0], byteSize: sourcePdf.byteLength };
 		const storedPdfs = new Map<string, Uint8Array>([[state.sourceDocuments[0].r2Key, sourcePdf]]);
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/complete",
 			{
 				method: "POST",
@@ -895,7 +904,7 @@ describe("signing flow API", () => {
 	it("rejects completion when the signer has no assigned fields", async () => {
 		state.fields = [];
 
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -921,7 +930,7 @@ describe("signing flow API", () => {
 	});
 
 	it("declines with a reason and optional comment while appending audit events", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/decline", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/decline", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",

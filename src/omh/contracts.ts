@@ -7,6 +7,7 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { getDb } from "@/db/setup";
+import type { ContractDefinition } from "./contracts-draft-schema";
 import { contractInvitationOutbox } from "./contracts-outbox-table";
 import type { ContractSummary } from "./contracts-schema";
 
@@ -72,6 +73,9 @@ const latestFinalKey = sql<string | null>`(select ${finalDocuments.r2Key} from $
  where ${finalDocuments.envelopeId}=${envelopeReference}
  order by ${finalDocuments.createdAt} desc,${finalDocuments.id} desc limit 1)`;
 const contractSelection = {
+	definition: sql<ContractDefinition | null>`(select ${auditEvents.message}::jsonb from ${auditEvents}
+ where ${auditEvents.envelopeId}=${envelopeReference} and ${auditEvents.eventType}='contract.definition'
+ order by ${auditEvents.createdAt} desc,${auditEvents.id} desc limit 1)`,
 	id: envelopes.id,
 	status: envelopes.status,
 	deliveryStatus: sql<string | null>`case when exists(select 1 from ${contractInvitationOutbox}
@@ -109,12 +113,14 @@ function toContractSummary(row: {
 	sourceFilename: string | null;
 	finalCreatedAt: string | null;
 	title: string | null;
+	definition?: ContractDefinition | null;
 }): ContractSummary {
 	const completedAt =
 		row.status === "completed" && row.finalCreatedAt
 			? new Date(row.finalCreatedAt).toISOString()
 			: null;
 	return {
+		...(row.definition ? { definition: row.definition } : {}),
 		id: row.id,
 		title: row.title ?? row.sourceFilename?.replace(/\.pdf$/i, "") ?? "Untitled contract",
 		status: row.deliveryStatus ?? row.status,

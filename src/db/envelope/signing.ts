@@ -60,17 +60,25 @@ const tokenRecipientReference = sql`${sql.identifier("signer_tokens")}.${sql.ide
 export type ResolvedSignerToken = SignerToken & {
 	envelopeStatus: Envelope["status"];
 	deletionPending: boolean;
+	emailHint?: string;
+	emailSessionVerified?: boolean;
 	completionContext?: SigningCompletionContext;
 };
 
 export async function resolveSignerToken(
 	token: string,
-	options: { completion?: boolean } = {},
+	options: { completion?: boolean; emailSessionHash?: string; now?: Date } = {},
 ): Promise<ResolvedSignerToken | null> {
 	const db = getDb();
 	const tokens = await db
 		.select({
 			...getTableColumns(signerTokens),
+			emailHint: sql<string>`(select left(r.email,1) || '•••@' || split_part(r.email,'@',2) from envelope_recipients r where r.id = ${tokenRecipientReference})`,
+			emailSessionVerified: options.emailSessionHash
+				? sql<boolean>`exists(select 1 from signer_email_sessions s join envelope_recipients r on r.id = s.recipient_id
+    where s.token_id = signer_tokens.id and s.envelope_id = ${tokenEnvelopeReference} and s.recipient_id = ${tokenRecipientReference}
+    and s.email = lower(trim(r.email)) and s.session_hash = ${options.emailSessionHash} and s.expires_at > ${options.now ?? new Date()})`
+				: sql<boolean>`false`,
 			deletionPending: sql<boolean>`not (${noEnvelopeDeletion(tokenEnvelopeReference)})`,
 			envelopeStatus: sql<string>`(select status from envelopes where id = ${tokenEnvelopeReference})`,
 			completionContext: options.completion
@@ -91,6 +99,8 @@ export async function resolveSignerToken(
 	const completion = found.completionContext;
 	return {
 		...parsed,
+		emailHint: found.emailHint,
+		emailSessionVerified: found.emailSessionVerified,
 		envelopeStatus: EnvelopeSchema.shape.status.parse(found.envelopeStatus),
 		deletionPending: found.deletionPending,
 		...(options.completion && completion

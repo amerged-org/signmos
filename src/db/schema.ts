@@ -24,6 +24,7 @@ export {
 	signerTokens,
 	sourceDocuments,
 } from "./envelope/table";
+export { contractFinalDeliveryOutbox } from "./final-delivery/table";
 export {
 	historyAccessLinks,
 	historyAccessRequests,
@@ -31,3 +32,4 @@ export {
 	historySecurityEvents,
 	historySessions,
 } from "./history-access/table";
+export { signerEmailChallenges, signerEmailSessions } from "./signer-email/table";

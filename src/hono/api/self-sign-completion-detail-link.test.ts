@@ -10,8 +10,10 @@ import {
 	signerTokens,
 	sourceDocuments,
 } from "@/db/envelope";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import { apiHono } from "@/hono/api";
 import { pdfFixtureBytes } from "@/test/pdf-fixtures";
+import { signerEmailRequest, signerEmailSessionFixtures } from "@/test/signer-email-fixture";
 
 const envelopeId = "00000000-0000-4000-8000-000000000001";
 const recipientId = "20000000-0000-4000-8000-000000000001";
@@ -40,6 +42,8 @@ const state = vi.hoisted(() => ({
 }));
 
 function selectRows(table: unknown): Array<Record<string, unknown>> {
+	if (table === signerEmailSessions)
+		return signerEmailSessionFixtures(state.tokens, state.recipients);
 	if (table === state.envelopesTable) return state.envelopes;
 	if (table === state.recipientsTable) return state.recipients;
 	if (table === state.fieldsTable) return state.fields;
@@ -132,7 +136,8 @@ describe("self-sign completion detail links", () => {
 		// - History table, cancel/delete controls, and new email providers are out of scope.
 		const bucket = bucketStub();
 
-		const complete = await apiHono.request(
+		const complete = await signerEmailRequest(
+			apiHono,
 			`/api/signing/${signerTokenValue}/complete`,
 			{
 				method: "POST",
@@ -180,7 +185,7 @@ describe("self-sign completion detail links", () => {
 		);
 
 		state.tokens[0] = { ...state.tokens[0], verifiedAt: null };
-		const signingLink = await apiHono.request(`/api/signing/${signerTokenValue}`, {
+		const signingLink = await signerEmailRequest(apiHono, `/api/signing/${signerTokenValue}`, {
 			headers: { "x-now": "2026-05-23T08:05:00.000Z" },
 		});
 		expect(signingLink.status).toBe(200);
@@ -193,7 +198,7 @@ describe("self-sign completion detail links", () => {
 			},
 		});
 
-		const detail = await apiHono.request(`/api/final-documents/${signerTokenValue}`, {
+		const detail = await signerEmailRequest(apiHono, `/api/final-documents/${signerTokenValue}`, {
 			headers: { "x-now": "2026-05-23T08:05:00.000Z" },
 		});
 		expect(detail.status).toBe(200);
@@ -213,7 +218,8 @@ describe("self-sign completion detail links", () => {
 			}),
 		});
 
-		const download = await apiHono.request(
+		const download = await signerEmailRequest(
+			apiHono,
 			`/api/final-documents/${signerTokenValue}/pdf`,
 			{ headers: { "x-now": "2026-05-23T08:05:00.000Z" } },
 			{ DOCUMENTS_BUCKET: bucket },
@@ -232,7 +238,7 @@ describe("self-sign completion detail links", () => {
 			expiresAt: new Date("2026-05-23T08:00:00.000Z"),
 		};
 
-		const response = await apiHono.request(`/api/signing/${signerTokenValue}`, {
+		const response = await signerEmailRequest(apiHono, `/api/signing/${signerTokenValue}`, {
 			headers: { "x-now": "2026-05-23T08:05:00.000Z" },
 		});
 

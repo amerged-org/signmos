@@ -13,9 +13,7 @@ import {
 	getSignerSession,
 	getSignerSourceDocument,
 	getSigningBlockedAllowedActions,
-	recordPartnerLinkExpired,
 	requestSigningChanges,
-	resolveSignerToken,
 	SigningChangeRequestError,
 	SigningCompletionBlockedError,
 	SigningFieldPlacementBlockedError,
@@ -29,7 +27,23 @@ import {
 import { MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import { createHono } from "@/hono/factory";
 
+import signerEmailEndpoint from "./signer-email";
+import { requireSignerBrowserToken, signerSameOriginError } from "./signer-email-auth";
+
 const signingEndpoint = createHono();
+signingEndpoint.use("/*", async (c, next) => {
+	await next();
+	c.res.headers.set("Cache-Control", "no-store");
+	c.res.headers.set("Referrer-Policy", "no-referrer");
+});
+signingEndpoint.route("/", signerEmailEndpoint);
+signingEndpoint.use("/*", async (c, next) => {
+	if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
+		const error = signerSameOriginError(c);
+		if (error) return error;
+	}
+	await next();
+});
 
 const SigningFieldPlacementRequestSchema = z.object({
 	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).optional(),
@@ -60,7 +74,7 @@ signingEndpoint.get("/verifications/:token", async (c) => {
 });
 
 signingEndpoint.get("/:token/source-pdf", async (c) => {
-	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"));
+	const token = await requireSignerBrowserToken(c);
 	if (token instanceof Response) return token;
 
 	const document = await getSignerSourceDocument(token);
@@ -91,7 +105,7 @@ signingEndpoint.get("/:token/source-pdf", async (c) => {
 	}
 
 	const bytes = await object.arrayBuffer();
-	const current = await getUsableToken(token.token, c.req.header("x-now"));
+	const current = await requireSignerBrowserToken(c);
 	if (current instanceof Response) return current;
 	if (
 		current.id !== token.id ||
@@ -108,7 +122,7 @@ signingEndpoint.get("/:token/source-pdf", async (c) => {
 });
 
 signingEndpoint.get("/:token/final-pdf", async (c) => {
-	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"));
+	const token = await requireSignerBrowserToken(c);
 	if (token instanceof Response) return token;
 
 	const document = await getSignerFinalDocument(token);
@@ -139,7 +153,7 @@ signingEndpoint.get("/:token/final-pdf", async (c) => {
 	}
 
 	const bytes = await object.arrayBuffer();
-	const current = await getUsableToken(token.token, c.req.header("x-now"));
+	const current = await requireSignerBrowserToken(c);
 	if (current instanceof Response) return current;
 	if (
 		current.id !== token.id ||
@@ -157,19 +171,18 @@ signingEndpoint.get("/:token/final-pdf", async (c) => {
 });
 
 signingEndpoint.get("/:token", async (c) => {
+	const token = await requireSignerBrowserToken(c);
+	if (token instanceof Response) return token;
 	const completedDocument = await getCompletedDocumentLinkForSignerToken(c.req.param("token"), {
 		now: parseNow(c.req.header("x-now")),
 	});
 	if (completedDocument) return c.json({ data: { completedDocument } });
 
-	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"));
-	if (token instanceof Response) return token;
-
 	return c.json({ data: await getSignerSession(token) });
 });
 
 signingEndpoint.patch("/:token/fields/:fieldId", async (c) => {
-	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"));
+	const token = await requireSignerBrowserToken(c);
 	if (token instanceof Response) return token;
 
 	const parsedFieldId = z.string().uuid().safeParse(c.req.param("fieldId"));
@@ -216,7 +229,7 @@ signingEndpoint.patch("/:token/fields/:fieldId", async (c) => {
 });
 
 signingEndpoint.post("/:token/complete", async (c) => {
-	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"), {
+	const token = await requireSignerBrowserToken(c, {
 		completion: true,
 	});
 	if (token instanceof Response) return token;
@@ -248,20 +261,8 @@ signingEndpoint.post("/:token/complete", async (c) => {
 		if (error instanceof SigningFieldValuesError) {
 			return c.json({ error: { code: "INVALID_SIGNING_COMPLETION", message: error.message } }, 400);
 		}
-		if (error instanceof SigningFinalizationError) {
-			return c.json(
-				{
-					error: {
-						code: error.code,
-						message: error.message,
-						...(error.phase ? { phase: error.phase, reason: error.reason } : {}),
-						retryable: true,
-						allowedActions: ["retry_completion"],
-					},
-				},
-				503,
-			);
-		}
+		if (error instanceof SigningFinalizationError)
+			return c.json(signingFinalizationErrorBody(error), 503);
 		if (error instanceof EmailDeliveryError) {
 			return c.json(emailDeliveryErrorBody(error, c.env as EmailDeliveryEnv | undefined), 502);
 		}
@@ -294,7 +295,7 @@ signingEndpoint.post("/:token/complete", async (c) => {
 });
 
 signingEndpoint.post("/:token/change-request", async (c) => {
-	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"));
+	const token = await requireSignerBrowserToken(c);
 	if (token instanceof Response) return token;
 
 	const parsed = ChangeRequestSigningRequestSchema.safeParse(await c.req.json());
@@ -336,7 +337,7 @@ signingEndpoint.post("/:token/change-request", async (c) => {
 });
 
 signingEndpoint.post("/:token/decline", async (c) => {
-	const token = await getUsableToken(c.req.param("token"), c.req.header("x-now"));
+	const token = await requireSignerBrowserToken(c);
 	if (token instanceof Response) return token;
 
 	const parsed = DeclineSigningRequestSchema.safeParse(await c.req.json());
@@ -366,74 +367,16 @@ signingEndpoint.post("/:token/decline", async (c) => {
 	}
 });
 
-async function getUsableToken(
-	tokenValue: string,
-	nowHeader: string | undefined,
-	options: { completion?: boolean } = {},
-) {
-	const token = await resolveSignerToken(tokenValue, options);
-	if (!token) {
-		return Response.json(
-			{
-				error: {
-					code: "TOKEN_NOT_FOUND",
-					message: "Signing token was not found",
-				},
-			},
-			{ status: 404 },
-		);
-	}
-
-	const now = new Date(nowHeader ?? Date.now());
-	const envelopeStatus = token.envelopeStatus;
-	if (envelopeStatus === "deleted" || token.deletionPending) {
-		return Response.json(
-			{
-				error: {
-					code: "ENVELOPE_DELETED",
-					message: "This document was deleted by the sender",
-				},
-			},
-			{ status: 410 },
-		);
-	}
-	if (envelopeStatus === "expired") {
-		return Response.json(
-			{
-				error: {
-					code: "ENVELOPE_EXPIRED",
-					message: "This signing link is no longer active",
-				},
-			},
-			{ status: 410 },
-		);
-	}
-	if (token.expiresAt <= now) {
-		await recordPartnerLinkExpired(token);
-		return Response.json(
-			{
-				error: {
-					code: "EXPIRED_TOKEN",
-					message: "Signing token has expired",
-				},
-			},
-			{ status: 410 },
-		);
-	}
-	if (!token.verifiedAt) {
-		return Response.json(
-			{
-				error: {
-					code: "PARTNER_VERIFICATION_REQUIRED",
-					message: "Partner email verification is required before signing",
-					verificationUrl: `/signing-verifications/${token.token}`,
-				},
-			},
-			{ status: 403 },
-		);
-	}
-
-	return token;
+function signingFinalizationErrorBody(error: SigningFinalizationError) {
+	return {
+		error: {
+			code: error.code,
+			message: error.message,
+			...(error.phase ? { phase: error.phase, reason: error.reason } : {}),
+			retryable: true,
+			allowedActions: ["retry_completion"],
+		},
+	};
 }
 
 function parseNow(nowHeader: string | undefined): Date {

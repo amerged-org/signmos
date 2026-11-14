@@ -8,6 +8,7 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import { getDocument } from "pdfjs-dist";
 import { hashAgenticCredential } from "@/db/agentic-access/request";
 import { withDatabase } from "@/db/setup";
+import { hashSignerSession } from "@/db/signer-email";
 import { apiHono } from "@/hono/api";
 import { processContractInvitations } from "./contracts-outbox";
 
@@ -178,6 +179,15 @@ it("uploads a template, enforces recipient-owned fields, and produces a complete
 	await postgres.query("UPDATE signer_tokens SET verified_at=now() WHERE envelope_id=$1", [
 		envelopeId,
 	]);
+	const cookies = new Map<string, string>();
+	for (const signer of rows) {
+		const session = crypto.randomUUID();
+		cookies.set(signer.token, `signmos_signer_session=${session}`);
+		await postgres.query(
+			"INSERT INTO signer_email_sessions(token_id,envelope_id,recipient_id,email,session_hash,expires_at,created_at) SELECT id,envelope_id,recipient_id,$1,$2,now()+interval '1 hour',now() FROM signer_tokens WHERE token=$3",
+			[signer.email, await hashSignerSession(session), signer.token],
+		);
+	}
 	const fields = (
 		await postgres.query<{ id: string; name: string; recipient_id: string }>(
 			"SELECT id,name,recipient_id FROM envelope_fields WHERE envelope_id=$1 ORDER BY page,y",
@@ -195,7 +205,7 @@ it("uploads a template, enforces recipient-owned fields, and produces a complete
 	const complete = (signer: string, body: object) =>
 		request(`/api/signing/${signer}/complete`, {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: { "content-type": "application/json", cookie: cookies.get(signer) ?? "" },
 			body: JSON.stringify(body),
 		});
 	const missing = await complete(ada.token, { signatureName: "Ada", fieldValues: {} });

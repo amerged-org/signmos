@@ -141,11 +141,11 @@ describe("history completed-document gateway", () => {
 		state.r2Objects = new Map([[finalR2Key, finalPdf]]);
 	});
 
-	it("returns detail and PDF via the session without changing the bearer-link contract", async () => {
+	it("returns detail and PDF via the session while rejecting anonymous final-document IDs", async () => {
 		// Issue #37 assumptions before RED:
 		// - History detail mirrors completed-document data but replaces bearer download URLs.
 		// - The envelope id is a non-secret locator authorized by the HTTP-only session.
-		// - Existing final-document bearer routes remain independently valid.
+		// - Final-document IDs are locators and do not authorize anonymous access.
 		const headers = {
 			cookie: `signmos_history_session=${rawSession}`,
 			"x-now": "2026-07-17T16:29:58.000Z",
@@ -184,11 +184,7 @@ describe("history completed-document gateway", () => {
 			`/api/final-documents/${finalDocumentToken}`,
 			{ headers: { "x-now": "2026-07-17T16:29:58.000Z" } },
 		);
-		expect(existingBearerResponse.status).toBe(200);
-		const existingBearerBody = await existingBearerResponse.json();
-		expect(existingBearerBody).toEqual({
-			data: expect.objectContaining({ token: finalDocumentToken, envelopeId }),
-		});
+		expect(existingBearerResponse.status).toBe(404);
 	});
 
 	it("keeps the session expiry fixed and rejects it at and after eight hours", async () => {

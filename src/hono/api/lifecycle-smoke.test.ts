@@ -11,8 +11,10 @@ import {
 	signerTokens,
 	sourceDocuments,
 } from "@/db/envelope";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import { apiHono } from "@/hono/api";
 import { pdfFixtureText } from "@/test/pdf-fixtures";
+import { signerEmailRequest, signerEmailSessionFixtures } from "@/test/signer-email-fixture";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -39,6 +41,8 @@ const state = vi.hoisted(() => ({
 }));
 
 function selectRows(table: unknown) {
+	if (table === signerEmailSessions)
+		return signerEmailSessionFixtures(state.tokens, state.recipients);
 	if (table === state.envelopesTable) return state.envelopes;
 	if (table === state.idempotencyTable) return state.idempotencyRecords;
 	if (table === state.sourceDocumentsTable) return state.sourceDocuments;
@@ -329,11 +333,18 @@ describe("agent lifecycle smoke path", () => {
 			},
 		});
 
-		const changeRequest = await apiHono.request(`/api/signing/${token}/change-request`, {
-			method: "POST",
-			headers: { "content-type": "application/json", "x-now": "2026-05-20T08:45:00.000Z" },
-			body: JSON.stringify({ comment: "Please update the billing address." }),
+		Object.assign(state.tokens.find((row) => row.token === token) ?? {}, {
+			verifiedAt: new Date("2026-05-20T08:30:00.000Z"),
 		});
+		const changeRequest = await signerEmailRequest(
+			apiHono,
+			`/api/signing/${token}/change-request`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json", "x-now": "2026-05-20T08:45:00.000Z" },
+				body: JSON.stringify({ comment: "Please update the billing address." }),
+			},
+		);
 		expect(changeRequest.status).toBe(200);
 
 		const changesStatus = await apiHono.request(`/api/envelopes/${envelopeId}/status`);
@@ -399,7 +410,11 @@ describe("agent lifecycle smoke path", () => {
 		};
 		token = revisedVerifiedBody.data.signingLink.token;
 
-		const signed = await apiHono.request(
+		Object.assign(state.tokens.find((row) => row.token === token) ?? {}, {
+			verifiedAt: new Date("2026-05-20T08:55:00.000Z"),
+		});
+		const signed = await signerEmailRequest(
+			apiHono,
 			`/api/signing/${token}/complete`,
 			{
 				method: "POST",
@@ -421,7 +436,8 @@ describe("agent lifecycle smoke path", () => {
 			},
 		});
 
-		const finalPdf = await apiHono.request(
+		const finalPdf = await signerEmailRequest(
+			apiHono,
 			`/api/signing/${token}/final-pdf`,
 			{ headers: { "x-now": "2026-05-20T09:01:00.000Z" } },
 			{ DOCUMENTS_BUCKET: bucket },

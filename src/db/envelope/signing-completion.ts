@@ -117,16 +117,6 @@ export async function completeSigning(
 	if (signingRecipient.status !== "sent") throw new SigningCompletionBlockedError("sent");
 	const senderNotificationUrl = buildSenderSigningNotificationUrl(token.envelopeId);
 	const shouldNotifySender = !sameEmail(signingRecipient.email, parsedEnvelope.createdBy);
-	if (shouldNotifySender && options.emailDelivery) {
-		await deliverTransactionalEmail(
-			buildSenderPartnerSignedEmail({
-				email: parsedEnvelope.createdBy,
-				signerName: signingRecipient.name,
-				statusUrl: toAbsoluteDeliveryUrl(senderNotificationUrl, options.emailDelivery),
-			}),
-			options.emailDelivery,
-		);
-	}
 
 	const writes: SigningBatchQuery[] = [
 		signingStatement(sql`select id from envelopes where id = ${token.envelopeId} for update`),
@@ -205,12 +195,47 @@ export async function completeSigning(
 		signingRecipient.email,
 	);
 
+	await notifyPartialSigning({
+		status: envelopeStatus,
+		recipient: signingRecipient,
+		creator: parsedEnvelope.createdBy,
+		envelopeId: token.envelopeId,
+		delivery: options.emailDelivery,
+	});
+
 	return {
 		envelopeId: token.envelopeId,
 		recipientId: token.recipientId,
 		recipientStatus: "completed",
 		envelopeStatus,
 	};
+}
+
+/** Final success is delivered by the durable outbox; partial progress is best effort. */
+async function notifyPartialSigning(input: {
+	status: Envelope["status"];
+	recipient: Recipient;
+	creator: string;
+	envelopeId: string;
+	delivery?: EmailDeliveryOptions;
+}): Promise<void> {
+	if (input.status !== "sent" || sameEmail(input.recipient.email, input.creator) || !input.delivery)
+		return;
+	try {
+		await deliverTransactionalEmail(
+			buildSenderPartnerSignedEmail({
+				email: input.creator,
+				signerName: input.recipient.name,
+				statusUrl: toAbsoluteDeliveryUrl(
+					buildSenderSigningNotificationUrl(input.envelopeId),
+					input.delivery,
+				),
+			}),
+			input.delivery,
+		);
+	} catch {
+		// A progress-notice failure must never reject an already saved signature.
+	}
 }
 
 async function persistSigningCompletion(

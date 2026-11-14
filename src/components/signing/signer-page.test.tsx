@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SignerPage } from "./signer-page";
 
@@ -248,12 +249,13 @@ describe("SignerPage", () => {
 		expect(rememberCheckbox).toHaveProperty("checked", true);
 
 		fireEvent.click(screen.getByRole("button", { name: "Zeichnen wählen" }));
-		expect(screen.getByLabelText("Unterschrift zeichnen")).toBeTruthy();
+		expect(await screen.findByLabelText("Unterschrift zeichnen")).toBeTruthy();
 		expect(screen.queryByLabelText("Dein vollständiger Name")).toBeNull();
 
 		fireEvent.click(screen.getByRole("button", { name: "Eintippen wählen" }));
+		const typedName = await screen.findByLabelText("Dein vollständiger Name");
 		expect(screen.queryByLabelText("Signing date")).toBeNull();
-		fireEvent.change(screen.getByLabelText("Dein vollständiger Name"), {
+		fireEvent.change(typedName, {
 			target: { value: "Ada New" },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "Jetzt unterschreiben" }));
@@ -388,27 +390,33 @@ describe("SignerPage", () => {
 		);
 	});
 
-	it("shows the partner verification link when signing access is blocked", async () => {
+	it("asks for an email code directly when a personal signing link needs verification", async () => {
 		const fetchMock = vi.fn().mockResolvedValueOnce(
-			new Response(
-				JSON.stringify({
+			Response.json(
+				{
 					error: {
 						code: "PARTNER_VERIFICATION_REQUIRED",
 						message: "Partner email verification is required before signing",
-						verificationUrl: "/api/signing/verifications/valid-token",
+						emailHint: "a•••@example.com",
+						verificationUrl: "/signing-verifications/valid-token",
 					},
-				}),
+				},
 				{ status: 403 },
 			),
 		);
 		vi.stubGlobal("fetch", fetchMock);
-
-		render(<SignerPage token="valid-token" />);
-
-		await screen.findByText("Bitte bestätige deine E-Mail-Adresse.");
-		expect(screen.getByRole("link", { name: "E-Mail bestätigen" }).getAttribute("href")).toBe(
-			"/api/signing/verifications/valid-token",
+		const client = new QueryClient();
+		render(
+			<QueryClientProvider client={client}>
+				<SignerPage token="valid-token" />
+			</QueryClientProvider>,
 		);
+
+		await screen.findByRole("button", { name: "Code senden" });
+		expect(screen.getByText("a•••@example.com")).toBeTruthy();
+		expect(screen.queryByRole("link", { name: "PDF öffnen" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Jetzt unterschreiben" })).toBeNull();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("shows completed document links when a signing link is already complete", async () => {

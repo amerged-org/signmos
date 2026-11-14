@@ -198,6 +198,44 @@ describe("truthful signing finalization", () => {
 		expect(put.mock.calls[0]?.[0]).toBe(put.mock.calls[1]?.[0]);
 	});
 
+	it("does not send a completion notice before a failed final upload", async () => {
+		const recipient = state.rows.get(envelopeRecipients)?.[0];
+		if (!recipient) throw new Error("Missing recipient");
+		recipient.email = "party@example.com";
+		let messages = 0;
+		vi.stubGlobal("fetch", async () => {
+			messages++;
+			return Response.json(
+				{ state: "accepted", request_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW", message_id: "message-1" },
+				{ status: 202 },
+			);
+		});
+		put.mockRejectedValueOnce(new Error("upload failed"));
+		try {
+			await expect(
+				completeSigning(
+					token,
+					{ signatureName: "Ada", rememberSignature: false },
+					{
+						documentsBucket: bucket,
+						emailDelivery: {
+							baseUrl: "https://sign.example.com",
+							env: {
+								OHMYHOST_PROJECT_ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+								OHMYHOST_MAIL_GATEWAY_URL: "https://mail.example.com",
+								OHMYHOST_MAIL_KEY: "m".repeat(43),
+								SIGN_FROM_EMAIL: "contracts@example.com",
+							},
+						},
+					},
+				),
+			).rejects.toMatchObject({ code: "FINAL_PDF_GENERATION_FAILED" });
+			expect(messages).toBe(0);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it("does not report completion when private document storage is unavailable", async () => {
 		await expect(
 			completeSigning(token, { signatureName: "Ada", rememberSignature: false }),

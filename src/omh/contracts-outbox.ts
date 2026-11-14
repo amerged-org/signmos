@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { noEnvelopeDeletion, signingStatement } from "@/db/envelope/signing-batch";
 import { getDb } from "@/db/setup";
+import type { OutboxProgress } from "./final-delivery-outbox";
 import type { OmhMailEnv } from "./mail";
 
 const OutboxClaimSchema = z.object({
@@ -22,21 +23,29 @@ const OutboxClaimSchema = z.object({
 type OutboxClaim = z.infer<typeof OutboxClaimSchema>;
 
 /** At most three sequential jobs: each uses exactly one claim, mail call and receipt. */
-export async function processContractInvitations(env: OmhMailEnv): Promise<void> {
-	for (let attempt = 0; attempt < 3; attempt++) {
+export async function processContractInvitations(
+	env: OmhMailEnv,
+	budget = 3,
+): Promise<OutboxProgress> {
+	if (budget <= 0) return { processed: 0, stopped: false };
+	for (let attempt = 0; attempt < Math.min(budget, 3); attempt++) {
 		const job = await claimInvitation();
-		if (!job) return;
+		if (!job) return { processed: attempt, stopped: false };
 		if (job.status === "manual_review") continue;
+		let recording = false;
 		try {
 			await sendInvitation(env, job);
+			recording = true;
 			await recordDelivered(job);
 		} catch {
 			// Delivery can have happened before an exception or failed receipt; never issue a new key.
-			await getDb().execute(sql`update contract_invitation_outbox set status = 'uncertain', updated_at = now()
+			if (!recording)
+				await getDb().execute(sql`update contract_invitation_outbox set status = 'uncertain', updated_at = now()
 				where id = ${job.id} and status = 'sending'`);
-			return;
+			return { processed: attempt + 1, stopped: true };
 		}
 	}
+	return { processed: Math.min(budget, 3), stopped: false };
 }
 
 async function claimInvitation(): Promise<OutboxClaim | null> {

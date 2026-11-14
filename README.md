@@ -4,9 +4,11 @@ Private contract sending and recipient signing, based on the MIT-licensed [Signm
 
 ## Workflow
 
-An allowlisted administrator signs in using a single-use email link. The private console uploads a PDF, adds an external recipient and sends the invitation. The recipient verifies their email, reviews the document and signs or declines. Completed PDFs include the captured signature/date and an audit summary. Administrators can view status, download completed PDFs and create or revoke API tokens.
+An allowlisted administrator signs in using a single-use email link. The private console uploads a PDF, adds an external recipient and sends the invitation. Each recipient opens a personal link, enters a six-digit code sent to their email address, and reviews and signs or declines without creating an account. Existing open links also require this code. Completed PDFs include the captured signature/date and an audit summary. Administrators can view status, download completed PDFs and create or revoke API tokens.
 
-`POST /api/contracts` provides the send flow to server integrations. Alongside the existing JSON format, multipart requests accept a PDF and JSON definitions for recipient-specific placeholders, including text, date, checkbox and signature fields. Multipart invitations are processed in the background. Requests require a Bearer token and a durable Idempotency-Key. Status and downloads remain owner-authorized. See [API documentation](docs/contracts-api.md).
+Server integrations can create a draft through `POST /api/contracts/drafts`, read it, update its title/parties/fields, replace the PDF and definition, and then send or delete it. The PDF and definition become immutable when sent. Sending chooses `delivery=email` or `delivery=manual` and returns personal signing links to the authenticated owner; manual delivery skips invitation emails but still requires email codes when recipients open their links. Include the sender as a party explicitly if they must sign; no signature is inferred or fabricated. All parties must finish before the final PDF becomes available.
+
+`POST /api/contracts` retains the existing create-and-send flow, including legacy JSON and multipart PDF + JSON placeholder definitions for text, date, checkbox and signature fields. Email invitations are queued in the background for multipart requests and explicit draft sends. Mutations require an administrator Bearer token (or the protected browser session) and a durable `Idempotency-Key`; reads, links and downloads remain owner-authorized. After completion, a durable mail queue delivers secure personal download links to all parties and the creator, without PDF attachments. See [API documentation](docs/contracts-api.md) and `/openapi.json`.
 
 ## Hosting and authentication
 
@@ -16,7 +18,7 @@ An allowlisted administrator signs in using a single-use email link. The private
 - Email uses the private OMH transactional-mail gateway and a verified sender domain.
 - `SIGN_ADMIN_EMAILS` is an explicit email allowlist; public registration is disabled.
 - Login sessions use Secure, HttpOnly, host-only cookies. Browser changes require same-origin requests and CSRF tokens. API keys are displayed once and stored as hashes.
-- Recipient signing/verification links remain accessible without administrator credentials and retain their envelope-specific authorization.
+- Recipient links require a six-digit email code and a recipient-bound HttpOnly session; an administrator login is not required.
 
 The deployment configuration is [ohmyhost.yaml](ohmyhost.yaml). Development and production use isolated databases and files. New schema migrations live in `database/omh-migrations` and are applied by OMH; the upstream Neon seed and direct migration commands are intentionally retired. First login creates the necessary identity, so no default password or seed account exists.
 
@@ -28,9 +30,9 @@ Supply runtime configuration privately through OMH:
 | --- | --- |
 | SIGN_ADMIN_EMAILS | Comma-separated administrator allowlist |
 | SIGN_EXTRA_ADMIN_EMAILS | Additional comma-separated administrator allowlist; does not replace existing administrators |
-| SIGN_EXTRA_ADMIN_EMAILS | Optional additional comma-separated administrators; combined with `SIGN_ADMIN_EMAILS` |
 | SIGN_FROM_EMAIL | Exact verified email sender |
 | SIGN_REPLY_TO_EMAIL | Existing reply mailbox |
+| SIGN_OTP_SECRET | Private secret of at least 32 characters for recipient email-code verification |
 | APP_BASE_URL | Trusted origin for this environment |
 | CLOUDFLARE_ENV | `production` for both hosted environments |
 
@@ -55,7 +57,9 @@ See [database adapter notes](docs/DATABASE_OMH.md), [architecture](ARCHITECTURE.
 
 ## Scope
 
-The legacy convenience API sends one PDF to one external signer and can append a dedicated signing page or use explicit field positions. The multipart API supports multiple external recipients and PDF placeholders. The inherited signing engine remains a pilot and does not implement qualified trust-service signatures. UI and API document the bounded PDF policy needed by the hosting runtime. Original upstream submission evidence remains available in Git history; it is not release evidence for this fork.
+The API-first draft flow accepts PDF + JSON; there is no stored-template management. HTML upload and HTML-to-PDF rendering remain **OPEN** until ohmyho.st provides a managed browser-rendering capability. HTML requests are explicitly rejected; no external rendering service processes contracts. The frontend language selector changes interface labels only; it does not translate PDF content, field data or emails.
+
+The legacy convenience API sends one PDF to one external signer and can append a dedicated signing page or use explicit field positions. The multipart API supports up to three parties and PDF placeholders. The inherited signing engine remains a pilot and does not implement qualified trust-service signatures. UI and API document the bounded PDF policy needed by the hosting runtime. Original upstream submission evidence remains available in Git history; it is not release evidence for this fork.
 
 ## License
 

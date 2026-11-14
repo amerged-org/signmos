@@ -1,10 +1,11 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
 	type AgenticPrincipal,
 	claimAgentCommand,
 	fingerprintAgentCommand,
 } from "@/db/agentic-access";
 import { agenticApiTokens, agenticCommandRecords } from "@/db/agentic-access/table";
+import { signingStatement } from "@/db/envelope/signing-batch";
 import { getDb } from "@/db/setup";
 
 /** A non-authenticating owner row provides durable idempotency for browser commands. */
@@ -69,4 +70,37 @@ export async function claimContractCommand(
 		})
 		.returning();
 	return record ? { state: "execute", recordId: record.id } : claimAgentCommand(input);
+}
+
+/** Fence uncertain work under its envelope lock before replaying or recording a failure. */
+export async function reconcileContractCommand(recordId: string): Promise<Response> {
+	const unavailable = JSON.stringify({
+		error: {
+			code: "CONTRACT_OPERATION_UNAVAILABLE",
+			message:
+				"The operation could not be confirmed. Inspect the draft and use a new key to retry.",
+		},
+	});
+	const result = await getDb().batch([
+		signingStatement(
+			sql`select e.id from envelopes e join agentic_command_records c on c.document_id=e.id where c.id=${recordId} for update of e`,
+		),
+		signingStatement(
+			sql`update agentic_command_records set state='completed',response_status=503,response_body=${unavailable},completed_at=now() where id=${recordId} and state='pending'`,
+		),
+		signingStatement(
+			sql`select response_status,response_body from agentic_command_records where id=${recordId} and state='completed'`,
+		),
+	]);
+	const receipt = result.at(-1)?.rows[0];
+	if (
+		!receipt ||
+		typeof receipt.response_status !== "number" ||
+		typeof receipt.response_body !== "string"
+	)
+		throw new Error("Contract command reconciliation is unavailable");
+	return new Response(receipt.response_body, {
+		status: receipt.response_status,
+		headers: { "content-type": "application/json", "cache-control": "private, no-store" },
+	});
 }

@@ -1,8 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import { Download } from "lucide-react";
-import { useEffect, useState } from "react";
 import { BrandHeader } from "@/components/layout/brand-header";
 import { PageShell } from "@/components/layout/page-shell";
 import { LoadingText } from "@/components/patterns/loading-text";
+import { SigningVerificationPage } from "@/components/signing/signing-verification-page";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/lib/i18n";
@@ -108,29 +109,34 @@ const copy = {
 export function CompletedDocumentPage({ token }: { token: string }) {
 	const { language } = useLanguage();
 	const text = copy[language];
-	const [view, setView] = useState<CompletedDocumentView | null>(null);
-	const [error, setError] = useState(false);
-
-	useEffect(() => {
-		let active = true;
-		fetch(`/api/final-documents/${encodeURIComponent(token)}`)
-			.then(async (response) => {
-				const body = (await response.json()) as { data?: CompletedDocumentView };
-				if (!active) return;
-				if (response.ok && body.data) {
-					setView(body.data);
-					setError(false);
-					return;
-				}
-				setError(true);
-			})
-			.catch(() => {
-				if (active) setError(true);
-			});
-		return () => {
-			active = false;
-		};
-	}, [token]);
+	const document = useQuery<CompletedDocumentView, CompletedDocumentError>({
+		queryKey: ["completed-document", token],
+		queryFn: async () => {
+			const response = await fetch(`/api/final-documents/${encodeURIComponent(token)}`);
+			const body = (await response.json()) as {
+				data?: CompletedDocumentView;
+				error?: { code?: string; emailHint?: string };
+			};
+			if (!response.ok || !body.data) {
+				throw new CompletedDocumentError(body.error?.code, body.error?.emailHint);
+			}
+			return body.data;
+		},
+		retry: false,
+		gcTime: 0,
+		refetchOnWindowFocus: false,
+	});
+	const view = document.data;
+	const error = document.error;
+	if (error?.code === "PARTNER_VERIFICATION_REQUIRED") {
+		return (
+			<SigningVerificationPage
+				token={token}
+				emailHint={error.emailHint}
+				onVerified={() => void document.refetch()}
+			/>
+		);
+	}
 
 	return (
 		<PageShell width="content">
@@ -217,6 +223,15 @@ export function CompletedDocumentPage({ token }: { token: string }) {
 			)}
 		</PageShell>
 	);
+}
+
+class CompletedDocumentError extends Error {
+	constructor(
+		readonly code?: string,
+		readonly emailHint?: string,
+	) {
+		super("Completed document unavailable");
+	}
 }
 
 function eventTitle(

@@ -1,18 +1,30 @@
+import { getCookie } from "hono/cookie";
 import {
 	getCompletedDocumentView,
 	getFinalDocumentDownloadContext,
 	regenerateFinalDocumentArtifact,
 } from "@/db/envelope";
 import { isCurrentFinalPdfArtifact } from "@/db/envelope/final-pdf-renderer";
+import { hashSignerSession, signerEmailCookie } from "@/db/signer-email";
 import { createHono } from "@/hono/factory";
+import { requireSignerBrowserToken } from "./signer-email-auth";
 
 const finalDocumentsEndpoint = createHono();
-
+finalDocumentsEndpoint.use("/*", async (c, next) => {
+	await next();
+	c.res.headers.set("Cache-Control", "no-store");
+	c.res.headers.set("Referrer-Policy", "no-referrer");
+});
 finalDocumentsEndpoint.get("/:token/pdf", async (c) => {
-	const context = await getFinalDocumentDownloadContext(c.req.param("token"), {
+	const rawSession = getCookie(c, signerEmailCookie);
+	const access = {
 		now: parseNow(c.req.header("x-now")),
-	});
+		emailSessionHash: rawSession ? await hashSignerSession(rawSession) : "",
+	};
+	const context = await getFinalDocumentDownloadContext(c.req.param("token"), access);
 	if (!context) {
+		const authorization = await requireSignerBrowserToken(c);
+		if (authorization instanceof Response) return authorization;
 		return c.json(
 			{
 				error: {
@@ -62,12 +74,7 @@ finalDocumentsEndpoint.get("/:token/pdf", async (c) => {
 			);
 		}
 	}
-	if (
-		!repaired &&
-		!(await getFinalDocumentDownloadContext(c.req.param("token"), {
-			now: parseNow(c.req.header("x-now")),
-		}))
-	) {
+	if (!repaired && !(await getFinalDocumentDownloadContext(c.req.param("token"), access))) {
 		return c.json(
 			{ error: { code: "FINAL_PDF_NOT_FOUND", message: "Completed PDF is not available" } },
 			404,
@@ -81,6 +88,8 @@ finalDocumentsEndpoint.get("/:token/pdf", async (c) => {
 });
 
 finalDocumentsEndpoint.get("/:token", async (c) => {
+	const authorization = await requireSignerBrowserToken(c);
+	if (authorization instanceof Response) return authorization;
 	const view = await getCompletedDocumentView(c.req.param("token"), {
 		now: parseNow(c.req.header("x-now")),
 	});

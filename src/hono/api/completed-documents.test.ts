@@ -8,7 +8,9 @@ import {
 	signerTokens,
 } from "@/db/envelope";
 import { historySecurityEventTypes } from "@/db/history-access/security-audit";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import { apiHono } from "@/hono/api";
+import { signerEmailRequest, signerEmailSessionFixtures } from "@/test/signer-email-fixture";
 
 const envelopeId = "00000000-0000-4000-8000-000000000001";
 const senderRecipientId = "20000000-0000-4000-8000-000000000001";
@@ -35,6 +37,8 @@ const state = vi.hoisted(() => ({
 }));
 
 function selectRows(table: unknown) {
+	if (table === signerEmailSessions)
+		return signerEmailSessionFixtures(state.tokens, state.recipients);
 	if (table === state.envelopesTable) return state.envelopes;
 	if (table === state.recipientsTable) return state.recipients;
 	if (table === state.fieldsTable) return state.fields;
@@ -225,10 +229,12 @@ describe("completed document access", () => {
 
 	it("returns completed view data with download, parties, signed dates, status, and public history", async () => {
 		// #27 assumptions before RED:
-		// - The final document id is the bearer final-download token.
+		// - The personal signer token requires its mailbox-proof session.
 		// - The completed-document API returns the UI contract instead of raw audit rows.
 		// - Security/verification and field-level technical audit rows are filtered from normal history.
-		const response = await apiHono.request(`/api/final-documents/${finalDocumentToken}`);
+		const response = await signerEmailRequest(apiHono, `/api/final-documents/valid-token`, {
+			headers: { "x-now": "2026-05-21T09:12:00Z" },
+		});
 
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as {
@@ -240,7 +246,7 @@ describe("completed document access", () => {
 			};
 		};
 		expect(body.data.status).toBe("completed");
-		expect(body.data.finalPdf.downloadUrl).toBe(`/api/final-documents/${finalDocumentToken}/pdf`);
+		expect(body.data.finalPdf.downloadUrl).toBe(`/api/final-documents/valid-token/pdf`);
 		expect(body.data.parties).toEqual([
 			expect.objectContaining({
 				name: "Sender Example",
@@ -276,23 +282,26 @@ describe("completed document access", () => {
 			})),
 		);
 
-		const response = await apiHono.request(`/api/final-documents/${finalDocumentToken}`);
+		const response = await signerEmailRequest(apiHono, `/api/final-documents/valid-token`, {
+			headers: { "x-now": "2026-05-21T09:12:00Z" },
+		});
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { data: { history: Array<{ type: string }> } };
 		expect(body.data.history.map((event) => event.type)).toEqual(["sent", "viewed", "signed"]);
 		expect(JSON.stringify(body)).not.toContain("history.");
 	});
 
-	it("downloads the final PDF with only the final document token", async () => {
+	it("downloads the final PDF with the signer token and scoped email proof", async () => {
 		const bucket = {
 			get: async (key: string) => ({
 				arrayBuffer: async () => state.r2Objects.get(key)?.buffer,
 			}),
 		};
 
-		const response = await apiHono.request(
-			`/api/final-documents/${finalDocumentToken}/pdf`,
-			undefined,
+		const response = await signerEmailRequest(
+			apiHono,
+			`/api/final-documents/valid-token/pdf`,
+			{ headers: { "x-now": "2026-05-21T09:12:00Z" } },
 			{ DOCUMENTS_BUCKET: bucket },
 		);
 
@@ -301,8 +310,8 @@ describe("completed document access", () => {
 		expect(new TextDecoder().decode(await response.arrayBuffer())).toContain("completed artifact");
 	});
 
-	it("routes a completed signing link to the completed-document view without signer verification", async () => {
-		const response = await apiHono.request("/api/signing/valid-token", {
+	it("routes a completed signing link with email proof to the completed-document view", async () => {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token", {
 			headers: { "x-now": "2026-05-21T09:12:00.000Z" },
 		});
 

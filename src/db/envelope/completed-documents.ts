@@ -125,7 +125,10 @@ export async function getFinalDocumentByToken(
 	return (await getFinalDocumentDownloadContext(token, options))?.document ?? null;
 }
 
-export async function getFinalDocumentDownloadContext(token: string, options: { now?: Date } = {}) {
+export async function getFinalDocumentDownloadContext(
+	token: string,
+	options: { now?: Date; emailSessionHash?: string } = {},
+) {
 	const db = getDb();
 	const [row] = await db
 		.select({
@@ -135,7 +138,7 @@ export async function getFinalDocumentDownloadContext(token: string, options: { 
 		.from(finalDocuments)
 		.where(sql`${noEnvelopeDeletion(sql`final_documents.envelope_id`)}
 		and exists (select 1 from envelopes e where e.id = final_documents.envelope_id and e.status = 'completed')
-		and (final_documents.id::text = ${token} or exists (select 1 from signer_tokens t where t.envelope_id = final_documents.envelope_id and t.token = ${token} and t.status = 'active' and t.expires_at > ${options.now ?? new Date()}))`)
+		and ${finalDownloadAuthority(sql`final_documents.envelope_id`, sql`final_documents.id`, token, options)}`)
 		.limit(1);
 	if (!row) return null;
 	const document = FinalDocumentSchema.parse(row);
@@ -143,8 +146,21 @@ export async function getFinalDocumentDownloadContext(token: string, options: { 
 		document,
 		snapshot: parseFinalizationSnapshotProjection(row.finalizationData),
 		access: sql`${noEnvelopeDeletion(document.envelopeId)} and exists (select 1 from envelopes e where e.id = ${document.envelopeId} and e.status = 'completed')
-			and (${document.id ?? null}::text = ${token} or exists (select 1 from signer_tokens t where t.envelope_id = ${document.envelopeId} and t.token = ${token} and t.status = 'active' and t.expires_at > ${options.now ?? new Date()}))`,
+			and ${finalDownloadAuthority(document.envelopeId, document.id ?? null, token, options)}`,
 	};
+}
+
+function finalDownloadAuthority(
+	envelopeId: string | ReturnType<typeof sql>,
+	documentId: string | null | ReturnType<typeof sql>,
+	token: string,
+	options: { now?: Date; emailSessionHash?: string },
+) {
+	if (options.emailSessionHash !== undefined)
+		return sql`exists(select 1 from signer_tokens t join signer_email_sessions s on s.token_id=t.id join envelope_recipients r on r.id=t.recipient_id
+  where t.envelope_id=${envelopeId} and t.token=${token} and t.status='active' and t.expires_at>${options.now ?? new Date()}
+  and s.envelope_id=t.envelope_id and s.recipient_id=t.recipient_id and s.email=lower(trim(r.email)) and s.session_hash=${options.emailSessionHash} and s.expires_at>${options.now ?? new Date()})`;
+	return sql`(${documentId}::text=${token} or exists(select 1 from signer_tokens t where t.envelope_id=${envelopeId} and t.token=${token} and t.status='active' and t.expires_at>${options.now ?? new Date()}))`;
 }
 
 export async function getCompletedDocumentLinkForSignerToken(

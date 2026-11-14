@@ -1,5 +1,7 @@
 import { getTableColumns, SQL, type Table } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { createFinalDeliveryTestStatements } from "@/db/final-delivery/test-db";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import {
 	auditEvents,
 	emailSendRecords,
@@ -61,6 +63,33 @@ export function wrapSigningTestDb<Database extends object>(
 		const result: unknown = await pending;
 		return Array.isArray(result) ? (result as Row[]) : [];
 	};
+	const hasEmailSession = (
+		envelopeId: unknown,
+		token: unknown,
+		now: Date,
+		sessionHash: unknown,
+	): boolean =>
+		rows(signerEmailSessions).some((session) => {
+			const signer = rows(signerTokens).find(
+				(row) =>
+					row.id === session.tokenId &&
+					row.token === token &&
+					row.status === "active" &&
+					row.expiresAt instanceof Date &&
+					row.expiresAt > now,
+			);
+			const recipient = rows(envelopeRecipients).find((row) => row.id === session.recipientId);
+			return Boolean(
+				signer &&
+					recipient &&
+					session.envelopeId === envelopeId &&
+					signer.recipientId === session.recipientId &&
+					String(recipient.email).trim().toLowerCase() === session.email &&
+					session.sessionHash === sessionHash &&
+					session.expiresAt instanceof Date &&
+					session.expiresAt > now,
+			);
+		});
 	const project = (
 		table: Table,
 		selected: Row[],
@@ -89,6 +118,16 @@ export function wrapSigningTestDb<Database extends object>(
 							(event) =>
 								event.envelopeId === document.envelopeId &&
 								event.eventType === "envelope.deletion_started",
+						)
+					)
+						return false;
+					if (
+						new PgDialect().sqlToQuery(condition).sql.includes("signer_email_sessions") &&
+						!hasEmailSession(
+							document.envelopeId,
+							token,
+							now ?? new Date(),
+							params.find((value) => typeof value === "string" && value.length === 64),
 						)
 					)
 						return false;
@@ -147,8 +186,33 @@ export function wrapSigningTestDb<Database extends object>(
 				);
 		}
 		if (table !== signerTokens || !selection || !("envelopeStatus" in selection)) return selected;
+		const sessionExpression = selection.emailSessionVerified;
+		const sessionParams =
+			sessionExpression instanceof SQL ? new PgDialect().sqlToQuery(sessionExpression).params : [];
+		const sessionHash = sessionParams.find((value) => typeof value === "string");
+		const sessionNow = sessionParams.find((value) => value instanceof Date) as Date | undefined;
 		return selected.map((token) => ({
 			...token,
+			emailHint: String(
+				rows(envelopeRecipients).find((row) => row.id === token.recipientId)?.email ?? "",
+			).replace(/^(.).*(@.*)$/, "$1•••$2"),
+			emailSessionVerified:
+				Boolean(sessionHash) &&
+				rows(signerEmailSessions).some(
+					(session) =>
+						session.tokenId === token.id &&
+						session.recipientId === token.recipientId &&
+						session.envelopeId === token.envelopeId &&
+						session.sessionHash === sessionHash &&
+						session.email ===
+							String(
+								rows(envelopeRecipients).find((row) => row.id === token.recipientId)?.email ?? "",
+							)
+								.trim()
+								.toLowerCase() &&
+						session.expiresAt instanceof Date &&
+						session.expiresAt > (sessionNow ?? new Date()),
+				),
 			deletionPending: rows(auditEvents).some(
 				(event) =>
 					event.envelopeId === token.envelopeId && event.eventType === "envelope.deletion_started",
@@ -303,10 +367,22 @@ export function wrapSigningTestDb<Database extends object>(
 			await update(envelopes, { status: "completed" }, undefined);
 		return [];
 	}
+	const { recordFinalDelivery, refreshFinalLinks } = createFinalDeliveryTestStatements(
+		rows,
+		insert,
+	);
 	const statementHandlers: Array<{
 		matches(statement: string): boolean;
 		run(params: unknown[]): Row[] | Promise<Row[]>;
 	}> = [
+		{
+			matches: (statement) => statement.includes("signing-final-delivery-intent"),
+			run: recordFinalDelivery,
+		},
+		{
+			matches: (statement) => statement.includes("signing-final-delivery-expiry"),
+			run: refreshFinalLinks,
+		},
 		{
 			matches: (statement) => statement.startsWith("delete from contract_invitation_outbox"),
 			run: () => [],

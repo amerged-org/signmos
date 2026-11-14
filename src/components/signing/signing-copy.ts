@@ -68,6 +68,21 @@ export const signingCopy = {
 		enterName: "Bitte Namen eingeben.",
 		drawRequired: "Bitte Unterschrift zeichnen.",
 		verifyTitle: "E-Mail-Adresse bestätigen",
+		codeTo: "Code per E-Mail an",
+		sendCode: "Code senden",
+		sendingCode: "Code wird gesendet…",
+		codeLabel: "6-stelliger Code",
+		confirmCode: "Bestätigen",
+		resendCode: "Neuen Code senden",
+		resendIn: "Neuer Code in {seconds} s",
+		codeExpiry: "Code gültig für {time}.",
+		codeExpired: "Der Code ist abgelaufen. Fordere einen neuen an.",
+		invalidCode: "Bitte gib den 6-stelligen Code ein.",
+		codeRejected: "Code ungültig oder abgelaufen. Bitte neuen Code anfordern.",
+		codeRateLimited: "Bitte warte kurz, bevor du einen neuen Code anforderst.",
+		codeDeliveryFailed: "Der Code konnte nicht gesendet werden. Bitte später erneut versuchen.",
+		codeUnavailable:
+			"E-Mail-Bestätigung ist gerade nicht verfügbar. Bitte später erneut versuchen.",
 		verifying: "E-Mail-Adresse wird geprüft…",
 		verified: "E-Mail-Adresse bestätigt",
 		verifyFailed: "Bestätigung nicht möglich",
@@ -150,6 +165,20 @@ export const signingCopy = {
 		enterName: "Enter your name.",
 		drawRequired: "Draw your signature.",
 		verifyTitle: "Verify your email",
+		codeTo: "Email a code to",
+		sendCode: "Send code",
+		sendingCode: "Sending code…",
+		codeLabel: "6-digit code",
+		confirmCode: "Verify",
+		resendCode: "Send a new code",
+		resendIn: "New code in {seconds} s",
+		codeExpiry: "Code valid for {time}.",
+		codeExpired: "This code has expired. Request a new one.",
+		invalidCode: "Enter the 6-digit code.",
+		codeRejected: "Code invalid or expired. Please request a new one.",
+		codeRateLimited: "Please wait before requesting a new code.",
+		codeDeliveryFailed: "Could not send the code. Please try again later.",
+		codeUnavailable: "Email verification is unavailable. Please try again later.",
 		verifying: "Verifying email…",
 		verified: "Email verified",
 		verifyFailed: "Verification failed",
@@ -232,6 +261,20 @@ export const signingCopy = {
 		enterName: "Vul je naam in.",
 		drawRequired: "Teken je handtekening.",
 		verifyTitle: "E-mailadres bevestigen",
+		codeTo: "Code per e-mail naar",
+		sendCode: "Code versturen",
+		sendingCode: "Code versturen…",
+		codeLabel: "6-cijferige code",
+		confirmCode: "Bevestigen",
+		resendCode: "Nieuwe code versturen",
+		resendIn: "Nieuwe code over {seconds} s",
+		codeExpiry: "Code geldig voor {time}.",
+		codeExpired: "Deze code is verlopen. Vraag een nieuwe aan.",
+		invalidCode: "Voer de 6-cijferige code in.",
+		codeRejected: "Code ongeldig of verlopen. Vraag een nieuwe aan.",
+		codeRateLimited: "Wacht even voordat je een nieuwe code aanvraagt.",
+		codeDeliveryFailed: "Code versturen mislukt. Probeer het later opnieuw.",
+		codeUnavailable: "E-mailbevestiging is niet beschikbaar. Probeer het later opnieuw.",
 		verifying: "E-mail controleren…",
 		verified: "E-mailadres bevestigd",
 		verifyFailed: "Bevestigen mislukt",
@@ -252,6 +295,14 @@ export type SigningLanguage = keyof typeof signingCopy;
 export function signingError(language: SigningLanguage, code?: string): string {
 	const copy = signingCopy[language];
 	switch (code) {
+		case "INVALID_EMAIL_CODE":
+			return copy.codeRejected;
+		case "EMAIL_CODE_RATE_LIMITED":
+			return copy.codeRateLimited;
+		case "EMAIL_DELIVERY_UNAVAILABLE":
+			return copy.codeDeliveryFailed;
+		case "EMAIL_VERIFICATION_UNAVAILABLE":
+			return copy.codeUnavailable;
 		case "TOKEN_NOT_FOUND":
 		case "PARTNER_VERIFICATION_NOT_FOUND":
 			return copy.linkMissing;
