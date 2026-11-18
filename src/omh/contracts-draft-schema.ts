@@ -1,5 +1,7 @@
 import { z } from "zod";
 import {
+	encodeContractPdf,
+	type HtmlContractRequest,
 	type MultipartContractRequest,
 	MultipartContractSchema,
 	readMultipartContract,
@@ -10,7 +12,7 @@ import {
 	ContractError,
 	type CreateContractRequest,
 	CreateContractSchema,
-	MAX_CONTRACT_REQUEST_BYTES,
+	readContractRequestBody,
 } from "./contracts-schema";
 
 export type DraftContractRequest = CreateContractRequest | MultipartContractRequest;
@@ -40,30 +42,8 @@ export const SendContractSchema = z.object({ delivery: z.enum(["email", "manual"
 
 export async function readContractJson(request: Request): Promise<unknown> {
 	if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json")
-		throw new ContractError(
-			"INVALID_CONTRACT",
-			"Use Content-Type: application/json; HTML rendering is not available",
-		);
-	const reader = request.body?.getReader();
-	if (!reader) throw new ContractError("INVALID_CONTRACT", "A request body is required");
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	for (;;) {
-		const result = await reader.read();
-		if (result.done) break;
-		size += result.value.byteLength;
-		if (size > MAX_CONTRACT_REQUEST_BYTES) {
-			await reader.cancel();
-			throw new ContractError("SOURCE_PDF_TOO_LARGE", "The contract request is too large", 413);
-		}
-		chunks.push(result.value);
-	}
-	const bytes = new Uint8Array(size);
-	let offset = 0;
-	for (const chunk of chunks) {
-		bytes.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
+		throw new ContractError("INVALID_CONTRACT", "Use Content-Type: application/json");
+	const bytes = await readContractRequestBody(request);
 	try {
 		return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
 	} catch {
@@ -71,9 +51,12 @@ export async function readContractJson(request: Request): Promise<unknown> {
 	}
 }
 
-export async function readDraftContract(request: Request): Promise<DraftContractRequest> {
+export async function readDraftContract(
+	request: Request,
+	allowHtml: boolean,
+): Promise<DraftContractRequest | HtmlContractRequest> {
 	if (request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data"))
-		return readMultipartContract(request);
+		return readMultipartContract(request, allowHtml);
 	return parseDraftContract(await readContractJson(request));
 }
 
@@ -81,10 +64,7 @@ export function parseDraftContract(value: unknown): DraftContractRequest {
 	if (value && typeof value === "object" && "recipients" in value) {
 		const { pdf, kind: _kind, ...definition } = value as Record<string, unknown>;
 		if (_kind !== undefined && _kind !== "placeholder")
-			throw new ContractError(
-				"INVALID_CONTRACT",
-				"Only PDF placeholder definitions are supported; HTML rendering is not available",
-			);
+			throw new ContractError("INVALID_CONTRACT", "Use kind=placeholder for PDF definitions");
 		const parsed = MultipartContractSchema.safeParse(definition);
 		const file = CreateContractSchema.shape.pdf.safeParse(pdf);
 		if (parsed.success && file.success)
@@ -98,7 +78,7 @@ export function parseDraftContract(value: unknown): DraftContractRequest {
 	}
 	throw new ContractError(
 		"INVALID_CONTRACT",
-		"Supply a PDF, title, recipients and matching field definitions; HTML rendering is not available",
+		"Supply a PDF, title, recipients and matching field definitions",
 	);
 }
 
@@ -143,11 +123,8 @@ export function requestWithPdf(
 	definition: ContractDefinition,
 	bytes: Uint8Array,
 ): DraftContractRequest {
-	let binary = "";
-	for (let start = 0; start < bytes.length; start += 0x8000)
-		binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
 	return parseDraftContract({
 		...definition,
-		pdf: { filename: definition.pdf.filename, base64: btoa(binary) },
+		pdf: { filename: definition.pdf.filename, base64: encodeContractPdf(bytes) },
 	});
 }

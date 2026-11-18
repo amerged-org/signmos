@@ -29,6 +29,8 @@ mail:
 functions:
   crons:
     - "*/5 * * * *"
+browser:
+  enabled: true
 storage:
   provider: r2
   jurisdiction: eu

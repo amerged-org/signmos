@@ -22,6 +22,8 @@ let attempts: string[];
 let loseInvitationReceipt: boolean;
 let databaseCalls = 0;
 let fileCalls = 0;
+let browserCalls = 0;
+let renderPdf: ((input: Request) => Promise<Response>) | undefined;
 let browserSession: string;
 let browserCsrf: string;
 let afterUploadComplete: (() => Promise<void>) | undefined;
@@ -110,13 +112,20 @@ const env = {
 	OHMYHOST_STORAGE_KEY: "s".repeat(43),
 	OHMYHOST_MAIL_GATEWAY_URL: "https://private-mail.example.com",
 	OHMYHOST_MAIL_KEY: "m".repeat(43),
+	OHMYHOST_BROWSER_BASE_URL: "https://private-browser.example.com",
+	OHMYHOST_BROWSER_KEY: "b".repeat(43),
 	SIGN_FROM_EMAIL: "contracts@mail.example.com",
 	SIGN_REPLY_TO_EMAIL: owner,
 } as unknown as Env;
 const scoped = <T>(callback: () => Promise<T>) =>
 	withDatabase({ OHMYHOST_DATABASE: binding }, callback);
 async function request(path: string, init: RequestInit = {}) {
-	const before = { database: databaseCalls, files: fileCalls, mail: attempts.length };
+	const before = {
+		database: databaseCalls,
+		files: fileCalls,
+		mail: attempts.length,
+		browser: browserCalls,
+	};
 	const response = await dispatchHostedRequest(
 		new Request(`https://sign.example.com${path}`, init),
 		{ ...env, OHMYHOST_DATABASE: binding } as Env,
@@ -132,7 +141,7 @@ async function request(path: string, init: RequestInit = {}) {
 		database,
 		files,
 		mail,
-		total: database + files + mail,
+		total: database + files + mail + browserCalls - before.browser,
 	});
 	return response;
 }
@@ -264,6 +273,7 @@ beforeEach(async () => {
 	failSourceSave = false;
 	loseReservationReceipt = false;
 	deletionRetryAt = undefined;
+	renderPdf = undefined;
 	budgets = [];
 	const session = await scoped(() =>
 		createHistorySessionFromVerifiedIdentity({
@@ -282,6 +292,11 @@ beforeEach(async () => {
 			[email, await hashAgenticCredential(token)],
 		);
 	vi.stubGlobal("fetch", async (input: Request) => {
+		if (new URL(input.url).origin === env.OHMYHOST_BROWSER_BASE_URL) {
+			browserCalls++;
+			if (!renderPdf) throw new Error("Unexpected fixture render");
+			return renderPdf(input);
+		}
 		if (new URL(input.url).origin !== env.OHMYHOST_MAIL_GATEWAY_URL) return storageGateway(input);
 		expect(new URL(input.url).origin).toBe(env.OHMYHOST_MAIL_GATEWAY_URL);
 		const body = (await input.json()) as GatewayMail;
@@ -344,4 +359,7 @@ export function loseNextReservationReceipt() {
 }
 export function deferDeletionUntil(retryAt?: string) {
 	deletionRetryAt = retryAt;
+}
+export function useBrowserPdf(renderer: (input: Request) => Promise<Response>) {
+	renderPdf = renderer;
 }

@@ -1,10 +1,8 @@
 import { z } from "zod";
 import { MAX_DOCUMENT_FIELDS } from "@/db/envelope/pdf-policy-limits";
-import {
-	ContractError,
-	MAX_CONTRACT_PDF_BYTES,
-	MAX_CONTRACT_REQUEST_BYTES,
-} from "./contracts-schema";
+import { ContractError, MAX_CONTRACT_PDF_BYTES, readContractRequestBody } from "./contracts-schema";
+
+const MAX_CONTRACT_HTML_BYTES = 1024 * 1024;
 
 const RecipientSchema = z
 	.object({
@@ -66,29 +64,16 @@ export type MultipartContractRequest = z.infer<typeof MultipartContractSchema> &
 	kind: "placeholder";
 	pdf: { filename: string; base64: string };
 };
+export type HtmlContractRequest = z.infer<typeof MultipartContractSchema> & {
+	kind: "placeholder";
+	html: { filename: string; content: string };
+};
 
-/** Bounded reads prevent an unauthenticated or chunked upload from exhausting worker memory. */
-export async function readMultipartContract(request: Request): Promise<MultipartContractRequest> {
-	const reader = request.body?.getReader();
-	if (!reader) throw new ContractError("INVALID_CONTRACT", "A request body is required");
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	for (;;) {
-		const result = await reader.read();
-		if (result.done) break;
-		size += result.value.byteLength;
-		if (size > MAX_CONTRACT_REQUEST_BYTES) {
-			await reader.cancel();
-			throw new ContractError("SOURCE_PDF_TOO_LARGE", "The contract request is too large", 413);
-		}
-		chunks.push(result.value);
-	}
-	const data = new Uint8Array(size);
-	let offset = 0;
-	for (const chunk of chunks) {
-		data.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
+export async function readMultipartContract(
+	request: Request,
+	allowHtml: boolean,
+): Promise<MultipartContractRequest | HtmlContractRequest> {
+	const data = await readContractRequestBody(request);
 	let form: FormData;
 	try {
 		form = await new Request(request.url, {
@@ -99,27 +84,21 @@ export async function readMultipartContract(request: Request): Promise<Multipart
 	} catch {
 		throw new ContractError("INVALID_CONTRACT", "Malformed multipart form");
 	}
+	const sourcePart = allowHtml && form.has("html") ? "html" : "pdf";
 	if (
-		form.getAll("pdf").length !== 1 ||
+		form.getAll(sourcePart).length !== 1 ||
 		form.getAll("definition").length !== 1 ||
-		[...form.keys()].some((key) => key !== "pdf" && key !== "definition")
+		[...form.keys()].some((key) => key !== sourcePart && key !== "definition")
 	)
-		throw new ContractError("INVALID_CONTRACT", "Provide exactly one pdf and one definition part");
-	const pdf = form.get("pdf");
+		throw new ContractError(
+			"INVALID_CONTRACT",
+			"Provide exactly one source file and one definition part",
+		);
+	const file = form.get(sourcePart);
 	const definition = form.get("definition");
-	if (!pdf || typeof pdf === "string" || !definition)
-		throw new ContractError("INVALID_CONTRACT", "Provide a PDF file and JSON definition");
-	if (/\.html?$/i.test(pdf.name) || pdf.type.toLowerCase().startsWith("text/html"))
-		throw new ContractError(
-			"HTML_RENDERING_UNAVAILABLE",
-			"HTML upload is not available; provide a PDF and JSON field definitions",
-		);
-	if (!/\.pdf$/i.test(pdf.name) || pdf.size > MAX_CONTRACT_PDF_BYTES || pdf.size === 0)
-		throw new ContractError(
-			pdf.size > MAX_CONTRACT_PDF_BYTES ? "SOURCE_PDF_TOO_LARGE" : "INVALID_SOURCE_PDF",
-			"Provide a non-empty PDF of at most 2 MiB",
-			pdf.size > MAX_CONTRACT_PDF_BYTES ? 413 : 400,
-		);
+	if (!file || typeof file === "string" || !definition)
+		throw new ContractError("INVALID_CONTRACT", "Provide a source file and JSON definition");
+	if (sourcePart === "pdf") validatePdfUpload(file);
 	let raw: unknown;
 	try {
 		raw = JSON.parse(
@@ -131,9 +110,45 @@ export async function readMultipartContract(request: Request): Promise<Multipart
 	const parsed = MultipartContractSchema.safeParse(raw);
 	if (!parsed.success)
 		throw new ContractError("INVALID_CONTRACT", "Invalid recipients or field definitions");
-	const bytes = new Uint8Array(await pdf.arrayBuffer());
+	const contract = { ...parsed.data, kind: "placeholder" as const };
+	if (sourcePart === "html") return { ...contract, html: await readHtmlUpload(file) };
+	const bytes = new Uint8Array(await file.arrayBuffer());
+	return { ...contract, pdf: { filename: file.name, base64: encodeContractPdf(bytes) } };
+}
+
+function validatePdfUpload(pdf: File): void {
+	if (/\.html?$/i.test(pdf.name) || pdf.type.toLowerCase().startsWith("text/html"))
+		throw new ContractError(
+			"HTML_RENDERING_UNAVAILABLE",
+			"The pdf part accepts PDF files. Use the html part when creating a contract from HTML",
+		);
+	if (!/\.pdf$/i.test(pdf.name) || pdf.size > MAX_CONTRACT_PDF_BYTES || pdf.size === 0)
+		throw new ContractError(
+			pdf.size > MAX_CONTRACT_PDF_BYTES ? "SOURCE_PDF_TOO_LARGE" : "INVALID_SOURCE_PDF",
+			"Provide a non-empty PDF of at most 2 MiB",
+			pdf.size > MAX_CONTRACT_PDF_BYTES ? 413 : 400,
+		);
+}
+
+async function readHtmlUpload(file: File): Promise<HtmlContractRequest["html"]> {
+	if (file.size > MAX_CONTRACT_HTML_BYTES)
+		throw new ContractError("SOURCE_HTML_TOO_LARGE", "The source HTML must be at most 1 MiB", 413);
+	if (!/\.html?$/i.test(file.name) || file.name.length > 255 || file.size === 0)
+		throw new ContractError("INVALID_SOURCE_HTML", "Provide a non-empty UTF-8 .html or .htm file");
+	let content: string;
+	try {
+		content = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+	} catch {
+		throw new ContractError("INVALID_SOURCE_HTML", "The source HTML must be valid UTF-8");
+	}
+	if (!content.trim())
+		throw new ContractError("INVALID_SOURCE_HTML", "Provide a non-empty HTML file");
+	return { filename: file.name, content };
+}
+
+export function encodeContractPdf(bytes: Uint8Array): string {
 	let binary = "";
 	for (let start = 0; start < bytes.length; start += 0x8000)
 		binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
-	return { ...parsed.data, kind: "placeholder", pdf: { filename: pdf.name, base64: btoa(binary) } };
+	return btoa(binary);
 }

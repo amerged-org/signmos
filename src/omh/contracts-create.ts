@@ -20,7 +20,8 @@ import {
 } from "@/db/envelope/table";
 import { getDb } from "@/db/setup";
 import { sha256Hex } from "@/hono/api/envelope-route-helpers";
-import type { MultipartContractRequest } from "./contracts-multipart";
+import { type ContractBrowserEnv, renderHtmlContract } from "./contracts-browser-pdf";
+import type { HtmlContractRequest, MultipartContractRequest } from "./contracts-multipart";
 import { contractInvitationOutbox } from "./contracts-outbox-table";
 import { prepareContractPdf } from "./contracts-pdf";
 import { preparePlaceholderContract } from "./contracts-placeholders";
@@ -34,19 +35,23 @@ import {
 export async function createAndSendClaimedContract(input: {
 	recordId: string;
 	email: string;
-	request: CreateContractRequest | MultipartContractRequest;
+	request: CreateContractRequest | MultipartContractRequest | HtmlContractRequest;
+	browserEnv?: ContractBrowserEnv;
 	documentsBucket: R2Bucket;
 	emailDelivery: EmailDeliveryOptions;
 }): Promise<ContractSummary> {
 	const email = input.email.trim().toLowerCase();
-	const request = input.request;
 	const sourceRecipients =
-		"kind" in request ? request.recipients : [{ ...request.recipient, index: 1 }];
+		"kind" in input.request ? input.request.recipients : [{ ...input.request.recipient, index: 1 }];
 	if (sourceRecipients.some((recipient) => email === recipient.email.trim().toLowerCase()))
 		throw new ContractError(
 			"EXTERNAL_RECIPIENT_REQUIRED",
 			"Each recipient must differ from the sender",
 		);
+	const request =
+		"html" in input.request
+			? await renderHtmlContract(input.request, input.browserEnv)
+			: input.request;
 	const prepared =
 		"kind" in request
 			? await preparePlaceholderContract(request)
@@ -96,7 +101,7 @@ export async function createAndSendClaimedContract(input: {
 			sha256: await sha256Hex(prepared.bytes),
 			byteSize: prepared.bytes.byteLength,
 			contentType: "application/pdf",
-			originalFilename: input.request.pdf.filename,
+			originalFilename: request.pdf.filename,
 			uploadedBy: email,
 			uploadedAt: now,
 		}),

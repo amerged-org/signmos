@@ -55,7 +55,9 @@ it("retains both existing create-and-send formats and invitation recovery", asyn
 	const { paths } = await openapi();
 	const create = paths["/api/contracts"].post;
 	expect(input(create)).toEqual(z.toJSONSchema(CreateContractSchema, { io: "input" }));
-	expect(create.requestBody?.content).toHaveProperty("multipart/form-data");
+	expect(input(create, "multipart/form-data")).toMatchObject({
+		oneOf: [{ required: ["pdf", "definition"] }, { required: ["html", "definition"] }],
+	});
 	expect(create.responses).toHaveProperty("201");
 	expect(create.responses).toHaveProperty("202");
 	expect(paths["/api/contracts/{id}/retry-invitations"].post.responses).toHaveProperty("200");
@@ -89,27 +91,29 @@ it("requires administrator authority and idempotency for every contract mutation
 
 it("publishes draft create, replacement, patch and send schemas from runtime validators", async () => {
 	const { paths } = await openapi();
-	for (const operation of [
-		paths["/api/contracts/drafts"].post,
-		paths["/api/contracts/{id}/pdf"].put,
-	]) {
+	const draft = paths["/api/contracts/drafts"].post;
+	const replacement = paths["/api/contracts/{id}/pdf"].put;
+	for (const operation of [draft, replacement]) {
 		expect(input(operation)).toEqual(z.toJSONSchema(DraftContractJsonSchema, { io: "input" }));
-		expect(input(operation, "multipart/form-data")).toMatchObject({
-			required: ["pdf", "definition"],
-			properties: { definition: z.toJSONSchema(MultipartContractSchema, { io: "input" }) },
-		});
 		expect(Object.keys(operation.requestBody?.content ?? {}).sort()).toEqual([
 			"application/json",
 			"multipart/form-data",
 		]);
 	}
+	const pdf = {
+		required: ["pdf", "definition"],
+		properties: { definition: z.toJSONSchema(MultipartContractSchema, { io: "input" }) },
+	};
+	expect(input(replacement, "multipart/form-data")).toMatchObject(pdf);
+	expect(input(draft, "multipart/form-data")).toMatchObject({
+		oneOf: [pdf, { ...pdf, required: ["html", "definition"] }],
+	});
 	expect(input(paths["/api/contracts/{id}"].patch)).toEqual(
 		z.toJSONSchema(PatchContractSchema, { io: "input" }),
 	);
 	expect(input(paths["/api/contracts/{id}/send"].post)).toEqual(
 		z.toJSONSchema(SendContractSchema, { io: "input" }),
 	);
-	expect(paths["/api/contracts/drafts"].post.description).toContain("OPEN");
 	expect(paths["/api/contracts/{id}/cancel"].post.requestBody?.required).toBe(false);
 });
 

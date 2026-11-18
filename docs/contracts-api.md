@@ -14,15 +14,15 @@ A lost response does not mean draft creation or PDF replacement failed. Retry th
 
 ## API-first draft lifecycle
 
-Create a PDF + JSON draft, inspect it, make changes, and send only after preparation is complete. There is no stored-template management. A draft does not send invitations or create a signature. The authenticated owner is the creator and signs only when explicitly included in the party definitions. Including that email creates an unsigned party with its own fields and personal link; it never creates consent or a signature automatically.
+Create a draft from PDF or HTML with a JSON definition, inspect it, make changes, and send after preparation is complete. A draft does not send invitations or create a signature. The authenticated owner is the creator and signs only when explicitly included in the party definitions.
 
 | Endpoint | Input and result |
 | --- | --- |
-| `POST /api/contracts/drafts` | PDF + JSON definition as multipart, or the JSON formats described below. Returns `201` with a `draft`. |
+| `POST /api/contracts/drafts` | PDF or HTML with a JSON definition as multipart, or the PDF JSON formats described below. Returns `201` with a `draft`. |
 | `GET /api/contracts` | Latest 100 owned contracts, newest first. |
 | `GET /api/contracts/{id}` | Summary, recipient progress and saved `definition` metadata. PDF metadata contains `filename`, never base64 or raw signing links. |
 | `PATCH /api/contracts/{id}` | JSON with one or more of `title`, `recipients` and `fields`. Arrays replace their previous definitions; omitted properties are kept. Returns `200`. |
-| `PUT /api/contracts/{id}/pdf` | Complete replacement PDF + JSON definition, using the same formats as draft creation. Returns `200`. |
+| `PUT /api/contracts/{id}/pdf` | Complete replacement PDF + JSON definition, using the multipart PDF or JSON PDF format. Returns `200`. |
 | `DELETE /api/contracts/{id}` | Deletes a draft and all private PDF versions. Returns `200` with `{ "data": { "id": "…", "status": "deleted" } }`. |
 | `POST /api/contracts/{id}/send` | JSON `{ "delivery": "email" }` or `{ "delivery": "manual" }`. Returns the summary plus personal `signingLinks`. |
 | `POST /api/contracts/{id}/cancel` | JSON `{}`. Cancels an outstanding contract and revokes personal links. Returns `200` with `{ "data": { "id": "…", "status": "expired" } }`. |
@@ -85,7 +85,23 @@ Both delivery modes return links only in the authenticated owner's send response
 
 The actual response also includes the normal summary fields. `manual` returns `200` with status `sent` and creates no invitation emails; the owner distributes each link to its intended party. `email` returns `202` with status `queued` and stores invitations in a durable outbox. Email-mode links stay inactive until every invitation has been accepted for delivery. List and detail responses never reveal these links. Treat them as private recipient credentials, even though opening one still requires an email code.
 
-## PDF placeholders and existing create-and-send
+## Create a contract from HTML
+
+Upload a UTF-8 `.html` or `.htm` file as the `html` part with the same JSON placeholder definition as for a PDF. A request may contain one source file. Use inline CSS and embedded images and fonts. Put each marker in its own visible block, for example `<p>{{1.sign}}</p>`, and leave sufficient space for the value. The API checks the rendered PDF for selectable markers and matching definitions before saving it.
+
+```sh
+curl https://sign.amerged.com/api/contracts/drafts \
+  -H "Authorization: Bearer $SIGN_API_TOKEN" \
+  -H "Idempotency-Key: html-draft-your-stable-reference" \
+  -F 'html=@agreement.html;type=text/html' \
+  -F 'definition=@definition.json;type=application/json'
+```
+
+The HTML limit is 1 MiB. The rendered PDF follows Sign's 2 MiB, 10-page and 20-placeholder limits. The service processes HTML globally, with JavaScript and external resources disabled. Sign stores the resulting PDF as the source for review and signing. Successful exact idempotent retries return the saved receipt without another render. Following a confirmed rendering failure, use a fresh key for a deliberate retry.
+
+`POST /api/contracts` also accepts the same HTML multipart upload and queues invitations after saving the PDF. To replace the source of an existing draft, upload a PDF to `PUT /api/contracts/{id}/pdf`.
+
+## PDF placeholders and create-and-send
 
 `POST /api/contracts` retains the existing create-and-send behavior. It accepts a PDF and a JSON definition as `multipart/form-data`, using the same placeholder definition as the draft endpoints. Use an administrator's Bearer token and an `Idempotency-Key` header.
 

@@ -7,6 +7,7 @@ import type { EmailDeliveryEnv } from "@/db/envelope";
 import { getDb } from "@/db/setup";
 import { createHono } from "@/hono/factory";
 import { resolveAdminRequest } from "@/omh/auth";
+import { renderHtmlContract } from "@/omh/contracts-browser-pdf";
 import {
 	claimContractCommand,
 	contractCommandPrincipal,
@@ -66,7 +67,9 @@ function handle(action: Action) {
 		let recordId: string | undefined;
 		try {
 			const request =
-				action === "create" || action === "replace" ? await readDraftContract(c.req.raw) : null;
+				action === "create" || action === "replace"
+					? await readDraftContract(c.req.raw, action === "create")
+					: null;
 			const patch =
 				action === "patch"
 					? PatchContractSchema.safeParse(await readContractJson(c.req.raw))
@@ -118,13 +121,13 @@ function handle(action: Action) {
 					{
 						data: await createClaimedContractDraft({
 							...command,
-							request,
+							request: "html" in request ? await renderHtmlContract(request, env) : request,
 							documentsBucket: storage(),
 						}),
 					},
 					201,
 				);
-			if (action === "replace" && request)
+			if (action === "replace" && request && "pdf" in request)
 				return c.json({
 					data: await replaceClaimedContractPdf({
 						...command,

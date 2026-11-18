@@ -409,7 +409,7 @@ it("queues API email links, retries an uncertain gateway receipt idempotently, a
 	]);
 }, 30_000);
 
-it("deletes only drafts and rejects HTML while managed rendering remains unavailable", async () => {
+it("deletes only drafts and keeps the pdf part restricted to PDF", async () => {
 	const response = await request(
 		"/api/contracts/drafts",
 		admin("POST", "delete-draft", await upload(definition(false))),

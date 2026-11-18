@@ -71,13 +71,13 @@ const errorSchema = {
 };
 const errors = Object.fromEntries(
 	Object.entries({
-		400: "Invalid contract or missing Idempotency-Key; HTML rendering is unavailable",
+		400: "Invalid contract, rejected HTML or missing Idempotency-Key",
 		403: "Administrator authentication or browser CSRF check failed",
 		404: "CONTRACT_NOT_FOUND: unknown, deleted or owned by another identity",
 		409: "Lifecycle, concurrent change or idempotency conflict; reload before a deliberate retry",
-		413: "PDF size, page or field limit exceeded",
-		502: "Email delivery could not be confirmed",
-		503: "Private storage, email or source/final PDF is unavailable; STORAGE_DELETE_PENDING waits for signed uploads to expire",
+		413: "HTML or PDF size, page or field limit exceeded",
+		502: "Email delivery could not be confirmed or the HTML renderer returned an invalid response",
+		503: "Private storage, email, PDF or HTML rendering is unavailable; STORAGE_DELETE_PENDING waits for signed uploads to expire",
 	}).map(([code, description]) => [
 		code,
 		{
@@ -116,6 +116,19 @@ export function buildContractsPaths() {
 			pdf: { contentType: "application/pdf" },
 			definition: { contentType: "application/json" },
 		},
+	};
+	const multipartCreate = {
+		schema: {
+			oneOf: [
+				multipart.schema,
+				{
+					...multipart.schema,
+					required: ["html", "definition"],
+					properties: { html: { type: "string", format: "binary" }, definition: placeholder },
+				},
+			],
+		},
+		encoding: { ...multipart.encoding, html: { contentType: "text/html" } },
 	};
 	const draftContent = {
 		"application/json": { schema: z.toJSONSchema(DraftContractJsonSchema, { io: "input" }) },
@@ -183,27 +196,30 @@ export function buildContractsPaths() {
 			post: {
 				...mutation("createContract", "Create and send a contract (existing endpoint)", [], {
 					"201": response("Created and sent (legacy JSON)", data(summary)),
-					"202": response("Accepted and queued (multipart)", data(summary)),
+					"202": response("Accepted and queued (PDF or HTML multipart)", data(summary)),
 				}),
 				description:
-					"Existing behavior retained. Links delivered by email, never returned here. PDF + JSON only; HTML rendering remains OPEN.",
+					"Links are delivered by email. Upload a PDF or UTF-8 HTML with a JSON field definition. HTML is rendered before the PDF is stored and queued.",
 				requestBody: {
 					required: true,
-					content: { "application/json": { schema: json }, "multipart/form-data": multipart },
+					content: { "application/json": { schema: json }, "multipart/form-data": multipartCreate },
 				},
 			},
 		},
 		"/api/contracts/drafts": {
 			post: {
-				...mutation("createContractDraft", "Create an unsigned PDF + JSON draft", [], {
+				...mutation("createContractDraft", "Create an unsigned draft from PDF or HTML", [], {
 					"201": response(
 						"Owned draft; no invitations or signing credentials created",
 						data(summary),
 					),
 				}),
 				description:
-					"The creator signs only when explicitly included as a party. HTML upload and HTML-to-PDF remain OPEN and are explicitly rejected.",
-				requestBody: { required: true, content: draftContent },
+					"The creator signs only when explicitly included as a party. HTML is rendered once at creation and its PDF is stored as the source document.",
+				requestBody: {
+					required: true,
+					content: { ...draftContent, "multipart/form-data": multipartCreate },
+				},
 			},
 		},
 		"/api/contracts/{id}": {

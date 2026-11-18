@@ -3,7 +3,32 @@ import { MAX_DOCUMENT_FIELDS, MAX_SOURCE_PDF_BYTES } from "@/db/envelope/pdf-pol
 import type { ContractDefinition } from "./contracts-draft-schema";
 
 export const MAX_CONTRACT_PDF_BYTES = MAX_SOURCE_PDF_BYTES;
-export const MAX_CONTRACT_REQUEST_BYTES = Math.ceil(MAX_CONTRACT_PDF_BYTES / 3) * 4 + 64 * 1024;
+const MAX_CONTRACT_REQUEST_BYTES = Math.ceil(MAX_CONTRACT_PDF_BYTES / 3) * 4 + 64 * 1024;
+
+/** Bound request bodies even when the client streams without a Content-Length. */
+export async function readContractRequestBody(request: Request): Promise<Uint8Array<ArrayBuffer>> {
+	const reader = request.body?.getReader();
+	if (!reader) throw new ContractError("INVALID_CONTRACT", "A request body is required");
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		size += value.byteLength;
+		if (size > MAX_CONTRACT_REQUEST_BYTES) {
+			await reader.cancel();
+			throw new ContractError("SOURCE_PDF_TOO_LARGE", "The contract request is too large", 413);
+		}
+		chunks.push(value);
+	}
+	const bytes = new Uint8Array(size);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return bytes;
+}
 
 const ContractFieldSchema = z
 	.object({

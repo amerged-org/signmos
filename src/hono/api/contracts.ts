@@ -10,7 +10,11 @@ import { getContract, getContractFinalPdf, listContracts } from "@/omh/contracts
 import { claimContractCommand, contractCommandPrincipal } from "@/omh/contracts-command";
 import { createAndSendClaimedContract } from "@/omh/contracts-create";
 import { readContractJson } from "@/omh/contracts-draft-schema";
-import { type MultipartContractRequest, readMultipartContract } from "@/omh/contracts-multipart";
+import {
+	type HtmlContractRequest,
+	type MultipartContractRequest,
+	readMultipartContract,
+} from "@/omh/contracts-multipart";
 import { retryContractInvitations } from "@/omh/contracts-outbox";
 import {
 	ContractError,
@@ -66,6 +70,7 @@ contractsEndpoint.post("/", async (c) => {
 			recordId: claim.recordId,
 			email: auth.principal.email,
 			request,
+			browserEnv: env,
 			documentsBucket: env.DOCUMENTS_BUCKET,
 			emailDelivery: { env, baseUrl: env.APP_BASE_URL?.trim() || new URL(c.req.url).origin },
 		});
@@ -148,11 +153,11 @@ contractsEndpoint.get("/:id", async (c) => {
 
 async function validatedContractRequest(
 	request: Request,
-): Promise<CreateContractRequest | MultipartContractRequest | Response> {
+): Promise<CreateContractRequest | MultipartContractRequest | HtmlContractRequest | Response> {
 	let json: unknown;
 	try {
 		if (request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data"))
-			return await readMultipartContract(request);
+			return await readMultipartContract(request, true);
 		json = await readContractJson(request);
 	} catch (error) {
 		return error instanceof ContractError
