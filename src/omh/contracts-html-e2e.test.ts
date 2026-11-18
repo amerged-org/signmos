@@ -39,6 +39,7 @@ it("renders HTML once and delivers a signed PDF from those frozen source bytes",
 	const bytes = await pdfBytes();
 	const renderer = vi.fn(async (input: Request) => {
 		expect(new URL(input.url).pathname).toBe("/pdf");
+		expect(input.redirect).toBe("manual");
 		expect(input.headers.get("authorization")).toBe(`Bearer ${env.OHMYHOST_BROWSER_KEY}`);
 		expect(await input.json()).toEqual({ html });
 		return new Response(bytes, { headers: { "content-type": "application/pdf" } });
@@ -126,6 +127,7 @@ it.each([
 	[402, "HTML_RENDER_CREDITS_UNAVAILABLE", 503],
 	[422, "INVALID_SOURCE_HTML", 400],
 	[429, "HTML_RENDER_RATE_LIMITED", 503],
+	[302, "HTML_RENDERING_UNAVAILABLE", 503],
 	[200, "HTML_RENDER_INVALID_PDF", 502],
 ] as const)("records an unsuccessful render (%s) without storing a PDF", async (status, code, mappedStatus) => {
 	const renderer = vi.fn(async () => new Response("private upstream diagnostic", { status }));

@@ -22,7 +22,7 @@ export async function renderHtmlContract(
 		response = await fetch(
 			new Request(`${env.OHMYHOST_BROWSER_BASE_URL.replace(/\/$/, "")}/pdf`, {
 				method: "POST",
-				redirect: "error",
+				redirect: "manual",
 				signal: AbortSignal.timeout(31_000),
 				headers: {
 					authorization: `Bearer ${env.OHMYHOST_BROWSER_KEY}`,

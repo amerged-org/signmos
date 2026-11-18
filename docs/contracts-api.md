@@ -90,7 +90,7 @@ The actual response also includes the normal summary fields. `manual` returns `2
 Upload a UTF-8 `.html` or `.htm` file as the `html` part with the same JSON placeholder definition as for a PDF. A request may contain one source file. Use inline CSS and embedded images and fonts. Put each marker in its own visible block, for example `<p>{{1.sign}}</p>`, and leave sufficient space for the value. The API checks the rendered PDF for selectable markers and matching definitions before saving it.
 
 ```sh
-curl https://sign.amerged.com/api/contracts/drafts \
+curl "$SIGN_API_BASE_URL/api/contracts/drafts" \
   -H "Authorization: Bearer $SIGN_API_TOKEN" \
   -H "Idempotency-Key: html-draft-your-stable-reference" \
   -F 'html=@agreement.html;type=text/html' \
@@ -253,7 +253,7 @@ Unexpected interruption after a command is claimed leaves the original command p
 
 ## HTML and language scope
 
-HTML upload and HTML-to-PDF conversion remain **OPEN**, pending a managed browser-rendering capability in ohmyho.st. The API accepts PDFs only. An HTML content type or a JSON HTML input is rejected with `400 INVALID_CONTRACT` and an explanation that HTML rendering is unavailable. A multipart HTML file returns `400 HTML_RENDERING_UNAVAILABLE`. No external renderer or third-party contract-processing service is used. Convert a template to a supported PDF before uploading it.
+HTML upload requires managed Browser PDF on the Sign deployment. Use that deployment’s URL as `SIGN_API_BASE_URL`. Its OpenAPI lists the accepted multipart parts. [Create a contract from HTML](#create-a-contract-from-html)
 
 The DE/EN/NL selector changes frontend interface labels only. It does not translate PDF content, field data or emails, and it does not add a language preference to contract API payloads.
 
