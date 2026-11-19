@@ -33,6 +33,7 @@ describe("agent API contract release", () => {
 			.map((route) => `${route.method.toLowerCase()} ${toPublicPath(route.path)}`)
 			.sort();
 		const published = Object.entries(document.paths)
+			.filter(([path]) => path.startsWith("/api/v1/"))
 			.flatMap(([path, methods]) =>
 				Object.keys(methods).map((method) => `${method.toLowerCase()} ${path}`),
 			)
@@ -40,6 +41,7 @@ describe("agent API contract release", () => {
 		expect(published).toEqual(runtime);
 
 		for (const [path, methods] of Object.entries(document.paths)) {
+			if (!path.startsWith("/api/v1/")) continue;
 			for (const [method, operation] of Object.entries(methods)) {
 				expect(operation.operationId, `${method} ${path} operationId`).toBeTruthy();
 				expect(operation.security, `${method} ${path} Bearer security`).toEqual([
@@ -74,7 +76,14 @@ describe("agent API contract release", () => {
 		expect(document.paths["/api/v1/documents/{documentId}/source-pdf"]?.put?.requestBody).toEqual(
 			expect.objectContaining({
 				content: {
-					"application/pdf": { schema: { type: "string", format: "binary" } },
+					"application/pdf": {
+						schema: {
+							type: "string",
+							format: "binary",
+							maxLength: 2_097_152,
+							description: "At most 2097152 bytes and 10 PDF pages",
+						},
+					},
 				},
 			}),
 		);
@@ -178,6 +187,7 @@ function read(file: string): string {
 
 function verifyCapabilityRows(capability: string, openapi: OpenApiDocument): void {
 	for (const [path, methods] of Object.entries(openapi.paths)) {
+		if (!path.startsWith("/api/v1/")) continue;
 		for (const [method, operation] of Object.entries(methods)) {
 			expect(capability, `${method} ${path}`).toContain(`\`${operation.operationId}\``);
 			if (!["post", "put", "patch", "delete"].includes(method)) continue;

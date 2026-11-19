@@ -2,6 +2,8 @@ import { boolean, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "d
 
 export const envelopeStatuses = [
 	"awaiting_verification",
+	"preparing",
+	"queued",
 	"draft",
 	"changes_requested",
 	"sent",
@@ -13,7 +15,7 @@ export const envelopeStatuses = [
 export const signingModes = ["only_me", "me_and_another_signer"] as const;
 export const recipientStatuses = ["pending", "sent", "completed", "declined"] as const;
 export const senderVerificationStatuses = ["pending", "verified", "expired"] as const;
-export const fieldTypes = ["signature", "date"] as const;
+export const fieldTypes = ["signature", "date", "text", "checkbox"] as const;
 export const signatureProfileKinds = ["drawn", "typed"] as const;
 
 export const envelopes = pgTable("envelopes", {
@@ -186,6 +188,10 @@ export const envelopeFields = pgTable("envelope_fields", {
 		.notNull()
 		.references(() => envelopeRecipients.id),
 	type: text("type").notNull(),
+	name: text("name"),
+	label: text("label"),
+	required: boolean("required"),
+	isPlaceholder: boolean("is_placeholder"),
 	page: integer("page").notNull(),
 	x: integer("x").notNull(),
 	y: integer("y").notNull(),

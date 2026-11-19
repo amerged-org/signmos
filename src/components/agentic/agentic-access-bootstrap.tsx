@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
+import { BrandHeader } from "@/components/layout/brand-header";
 import { PageShell } from "@/components/layout/page-shell";
-import { Wordmark } from "@/components/layout/wordmark";
 import { LoadingText } from "@/components/patterns/loading-text";
 import { AgenticAccessConfirmationPage } from "./agentic-access-confirmation-page";
 
@@ -18,7 +18,7 @@ export function AgenticAccessBootstrap() {
 	if (!credential) {
 		return (
 			<PageShell width="narrow">
-				<Wordmark />
+				<BrandHeader />
 				<LoadingText boxed>Checking this secure link…</LoadingText>
 			</PageShell>
 		);

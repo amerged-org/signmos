@@ -102,38 +102,48 @@ function pushRows(target: Array<Record<string, unknown>>, rows: Array<Record<str
 	return rows;
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: Record<string, unknown>) => ({
-				where: async () => {
-					if (table === state.envelopesTable) {
-						state.envelopes = state.envelopes.map((envelope) => ({ ...envelope, ...value }));
-					}
-					if (table === state.recipientsTable) {
-						state.recipients = state.recipients.map((recipient) => ({ ...recipient, ...value }));
-					}
-					if (table === state.tokensTable) {
-						state.tokens = state.tokens.map((token) => ({ ...token, ...value }));
-					}
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: Record<string, unknown>) => ({
+							where: async () => {
+								if (table === state.envelopesTable) {
+									state.envelopes = state.envelopes.map((envelope) => ({ ...envelope, ...value }));
+								}
+								if (table === state.recipientsTable) {
+									state.recipients = state.recipients.map((recipient) => ({
+										...recipient,
+										...value,
+									}));
+								}
+								if (table === state.tokensTable) {
+									state.tokens = state.tokens.map((token) => ({ ...token, ...value }));
+								}
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("partner verification delivery", () => {
 	beforeEach(() => {
@@ -226,7 +236,7 @@ describe("partner verification delivery", () => {
 		);
 	});
 
-	it("requires partner email verification before signing access is granted", async () => {
+	it("requires a mailbox code after safe partner-link inspection", async () => {
 		state.tokens.push({
 			id: "30000000-0000-4000-8000-000000000001",
 			envelopeId: "00000000-0000-4000-8000-000000000001",
@@ -242,72 +252,38 @@ describe("partner verification delivery", () => {
 			headers: { "x-now": "2026-05-20T08:00:00.000Z" },
 		});
 		expect(blocked.status).toBe(403);
-		await expect(blocked.json()).resolves.toEqual({
+		expect(await blocked.json()).toMatchObject({
 			error: {
 				code: "PARTNER_VERIFICATION_REQUIRED",
-				message: "Partner email verification is required before signing",
+				emailHint: "a•••@example.com",
 				verificationUrl: "/signing-verifications/partner-token",
 			},
 		});
-
-		const verified = await apiHono.request("/api/signing/verifications/partner-token", {
+		const inspected = await apiHono.request("/api/signing/verifications/partner-token", {
 			headers: { "x-now": "2026-05-20T08:05:00.000Z" },
 		});
-		expect(verified.status).toBe(200);
-		await expect(verified.json()).resolves.toEqual({
+		expect(inspected.status).toBe(200);
+		expect(await inspected.json()).toEqual({
 			data: {
-				envelopeId: "00000000-0000-4000-8000-000000000001",
-				recipientId: "20000000-0000-4000-8000-000000000001",
-				status: "verified",
-				signingLink: {
-					token: "partner-token",
-					url: "/signing/partner-token",
-				},
-				verifiedAt: "2026-05-20T08:05:00.000Z",
+				status: "email_verification_required",
+				emailHint: "a•••@example.com",
+				signingLink: { token: "partner-token", url: "/signing/partner-token" },
 			},
 		});
-
-		const opened = await apiHono.request("/api/signing/partner-token", {
-			headers: { "x-now": "2026-05-20T08:06:00.000Z" },
-		});
-		expect(opened.status).toBe(200);
-		await expect(opened.json()).resolves.toEqual({
-			data: {
-				envelopeId: "00000000-0000-4000-8000-000000000001",
-				recipientId: "20000000-0000-4000-8000-000000000001",
-				signingMode: "me_and_another_signer",
-				sourceDocument: {
-					version: 1,
-					contentType: "application/pdf",
-					downloadUrl: "/api/signing/partner-token/source-pdf",
-				},
-				fields: [
-					expect.objectContaining({
-						id: "50000000-0000-4000-8000-000000000001",
-						type: "signature",
-					}),
-				],
-				previewFields: [
-					expect.objectContaining({
-						id: "50000000-0000-4000-8000-000000000001",
-						recipientName: "Ada Lovelace",
-						value: null,
-						assignedToCurrentSigner: true,
-					}),
-				],
-				signaturePreference: null,
-			},
-		});
-		expect(state.tokens[0]?.verifiedAt).toEqual(new Date("2026-05-20T08:05:00.000Z"));
-		expect(state.auditEvents).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ eventType: "partner.verified", message: "ada@example.com" }),
-				expect.objectContaining({ eventType: "partner.signing.viewed", message: null }),
-			]),
+		expect(
+			(
+				await apiHono.request("/api/signing/partner-token", {
+					headers: { "x-now": "2026-05-20T08:06:00.000Z" },
+				})
+			).status,
+		).toBe(403);
+		expect(state.tokens[0]?.verifiedAt).toBeNull();
+		expect(state.auditEvents).not.toEqual(
+			expect.arrayContaining([expect.objectContaining({ eventType: "partner.verified" })]),
 		);
 	});
 
-	it("expires verification and signing links after seven days with stable audit events", async () => {
+	it("expires verification and signing links after seven days", async () => {
 		state.tokens.push({
 			id: "30000000-0000-4000-8000-000000000001",
 			envelopeId: "00000000-0000-4000-8000-000000000001",
@@ -336,8 +312,8 @@ describe("partner verification delivery", () => {
 		expect(exactBoundary.status).toBe(410);
 		await expect(exactBoundary.json()).resolves.toEqual({
 			error: {
-				code: "EXPIRED_PARTNER_VERIFICATION",
-				message: "Partner verification token has expired",
+				code: "EXPIRED_TOKEN",
+				message: "This signing link is no longer active",
 			},
 		});
 
@@ -351,15 +327,6 @@ describe("partner verification delivery", () => {
 				message: "Signing token has expired",
 			},
 		});
-		expect(state.auditEvents).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					eventType: "partner.link.expired",
-					recipientId: "20000000-0000-4000-8000-000000000001",
-					message: "expired-partner-token",
-				}),
-			]),
-		);
 	});
 
 	it("treats repeated send as idempotent without duplicating delivery records", async () => {

@@ -51,18 +51,25 @@ function selectRows(table: unknown): Array<Record<string, unknown>> {
 	return [];
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-				limit: async () => selectRows(table),
-			}),
-		}),
-	}),
-}));
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+							limit: async () => selectRows(table),
+						}),
+					}),
+				},
+				selectRows,
+			),
+	};
+});
 
 describe("confirmed email document history API", () => {
 	beforeEach(() => {
@@ -334,7 +341,7 @@ describe("confirmed email document history API", () => {
 		);
 	});
 
-	it("lets completed history actions return the final PDF through existing access rules", async () => {
+	it("requires email proof before a completed-history personal link downloads a PDF", async () => {
 		const history = await apiHono.request(`/api/envelopes/${currentEnvelopeId}/history`, {
 			headers: {
 				"x-sender-session-token": "verified-sender-token",
@@ -370,10 +377,10 @@ describe("confirmed email document history API", () => {
 			},
 		);
 
-		expect(pdf.status).toBe(200);
-		expect(pdf.headers.get("content-type")).toBe("application/pdf");
-		const bytes = new Uint8Array(await pdf.arrayBuffer());
-		expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe("%PDF-");
+		expect(pdf.status).toBe(403);
+		await expect(pdf.json()).resolves.toEqual({
+			error: expect.objectContaining({ code: "PARTNER_VERIFICATION_REQUIRED" }),
+		});
 	});
 });
 

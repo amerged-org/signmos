@@ -1,4 +1,4 @@
-import { isResendConfigured } from "./email-delivery";
+import { buildPartnerVerificationEmail, isResendConfigured } from "./email-delivery";
 
 const configured = {
 	RESEND_API_KEY: "re_configured",
@@ -23,4 +23,19 @@ describe("development email delivery fixture", () => {
 			}),
 		).toBe(true);
 	});
+});
+
+it("keeps the invitation link and timing in both branded HTML and plain text", () => {
+	const url = "https://sign.example.test/signing-verifications/test-token";
+	const email = buildPartnerVerificationEmail({
+		email: "ada@example.test",
+		recipientName: "Ada <Test>",
+		verificationUrl: url,
+	});
+	expect(email.text).toContain(url);
+	expect(email.html).toContain(`href="${url}"`);
+	expect(email.text).toContain("7 Tage");
+	expect(email.html).toContain("7 Tage");
+	expect(email.html).toContain("Ada &lt;Test&gt;");
+	expect(email.html).toContain("amerged-logo-email.png");
 });

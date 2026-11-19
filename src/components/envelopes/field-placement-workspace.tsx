@@ -1,5 +1,6 @@
 import { CheckCircle2, Circle, Save } from "lucide-react";
 import type { MouseEvent, PointerEvent, RefObject } from "react";
+import { useNoncePositionStyle } from "@/components/nonce-position-style";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -316,19 +317,15 @@ function FieldOverlay({
 	onMouseDown?: (event: MouseEvent<HTMLElement>) => void;
 }) {
 	const isCompact = field.height < 40;
+	const position = useNoncePositionStyle(field, pdfPage);
 	const palette = recipientOverlayPalette(colorIndex);
 	const className = cn(
 		"absolute z-10 flex justify-center overflow-hidden rounded border-2 px-1 tabular-nums",
+		position.className,
 		palette,
 		isCurrent && "cursor-move ring-2 ring-slate-950/20",
 		isCompact ? "items-center text-[9px]" : "flex-col text-[10px] leading-tight",
 	);
-	const style = {
-		left: `${(field.x / pdfPage.width) * 100}%`,
-		top: `${(field.y / pdfPage.height) * 100}%`,
-		width: `${(field.width / pdfPage.width) * 100}%`,
-		height: `${(field.height / pdfPage.height) * 100}%`,
-	};
 	const content = isCompact ? (
 		<span className="truncate font-medium">
 			{field.type} · {recipientName}
@@ -341,27 +338,31 @@ function FieldOverlay({
 	);
 	if (isCurrent) {
 		return (
-			<button
-				aria-label="Current signature placeholder"
-				type="button"
-				className={className}
-				style={style}
-				onPointerDown={onPointerDown}
-				onMouseDown={onMouseDown}
-			>
-				{content}
-			</button>
+			<>
+				{position.styles}
+				<button
+					aria-label="Current signature placeholder"
+					type="button"
+					className={className}
+					onPointerDown={onPointerDown}
+					onMouseDown={onMouseDown}
+				>
+					{content}
+				</button>
+			</>
 		);
 	}
 	return (
-		<div
-			aria-label={`${recipientName} ${field.type} placeholder`}
-			role="img"
-			className={className}
-			style={style}
-		>
-			{content}
-		</div>
+		<>
+			{position.styles}
+			<div
+				aria-label={`${recipientName} ${field.type} placeholder`}
+				role="img"
+				className={className}
+			>
+				{content}
+			</div>
+		</>
 	);
 }
 

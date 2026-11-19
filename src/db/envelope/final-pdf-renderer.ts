@@ -1,7 +1,25 @@
+import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, type PDFFont, type PDFPage, rgb, StandardFonts } from "pdf-lib";
+import {
+	appendFieldContinuationPages,
+	fieldValueNeedsContinuation,
+	type OverflowFieldValue,
+} from "./field-overflow";
+import { assertPdfFieldCount, loadValidatedSourcePdf } from "./pdf-policy";
+import { placeholderFontBytes } from "./placeholder-font";
 import type { SourceDocument } from "./schema";
 
-export const FINAL_PDF_RENDERER_PRODUCER = "signmos-final-pdf-renderer/3";
+export const FINAL_PDF_RENDERER_PRODUCER = "amerged-sign-final-pdf-renderer/4";
+
+export class FinalPdfRenderError extends Error {
+	constructor(
+		public readonly code: "INVALID_SOURCE_PDF" | "FIELD_PAGE_MISSING",
+		message: string,
+	) {
+		super(message);
+		this.name = "FinalPdfRenderError";
+	}
+}
 
 export type FinalPdfRows = {
 	fields: Array<Record<string, unknown>>;
@@ -16,17 +34,25 @@ export async function renderFinalPdf(input: {
 	certificateHash: string;
 	sourceBytes: Uint8Array;
 }): Promise<Uint8Array> {
-	const pdf = await loadSourcePdf(input.sourceBytes);
+	const rows = canonicalRows(input.rows);
+	assertPdfFieldCount(rows.fields.length);
+	const pdf = await loadValidatedSourcePdf(input.sourceBytes);
 	pdf.setProducer(FINAL_PDF_RENDERER_PRODUCER);
 	const font = await pdf.embedFont(StandardFonts.Helvetica);
 	const boldFont = await pdf.embedFont(StandardFonts.HelveticaBold);
 	const signatureFont = await pdf.embedFont(StandardFonts.HelveticaOblique);
-	drawFieldValues(pdf, input.rows, font, boldFont, signatureFont);
+	const hasPlaceholders = rows.fields.some((field) => field.isPlaceholder === true);
+	if (hasPlaceholders) pdf.registerFontkit(fontkit);
+	const placeholderFont = hasPlaceholders
+		? await pdf.embedFont(placeholderFontBytes(), { subset: true })
+		: font;
+	const overflow = drawFieldValues(pdf, rows, font, boldFont, signatureFont, placeholderFont);
+	appendFieldContinuationPages(pdf, overflow, placeholderFont, drawSignaturePath);
 	drawAuditCertificate(
 		pdf,
 		input.envelopeId,
 		input.sourceDocument,
-		input.rows,
+		rows,
 		input.certificateHash,
 		font,
 		boldFont,
@@ -36,7 +62,7 @@ export async function renderFinalPdf(input: {
 
 export async function isCurrentFinalPdfArtifact(bytes: Uint8Array): Promise<boolean> {
 	try {
-		const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+		const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
 		return pdf.getProducer() === FINAL_PDF_RENDERER_PRODUCER;
 	} catch {
 		return false;
@@ -47,25 +73,28 @@ export function buildCertificateMaterial(
 	sourceDocument: SourceDocument,
 	rows: FinalPdfRows,
 ): string {
+	const stableRows = canonicalRows(rows);
 	return [
 		`source:${sourceDocument.sha256}`,
 		"fields:",
-		...buildFlattenedFieldLines(rows),
+		...buildFlattenedFieldLines(stableRows),
 		"events:",
-		...buildEventSummaryLines(rows.events),
+		...buildEventSummaryLines(stableRows.events),
 	].join("\n");
 }
 
-async function loadSourcePdf(sourceBytes: Uint8Array): Promise<PDFDocument> {
-	try {
-		const pdf = await PDFDocument.load(sourceBytes, { ignoreEncryption: true });
-		pdf.getPageCount();
-		return pdf;
-	} catch {
-		const pdf = await PDFDocument.create();
-		pdf.addPage([612, 792]);
-		return pdf;
-	}
+function canonicalRows(rows: FinalPdfRows): FinalPdfRows {
+	const ordered = (input: Array<Record<string, unknown>>, keys: string[]) =>
+		[...input].sort((left, right) => {
+			const leftKey = keys.map((key) => stringValue(left, key)).join("\u0000");
+			const rightKey = keys.map((key) => stringValue(right, key)).join("\u0000");
+			return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+		});
+	return {
+		fields: ordered(rows.fields, ["id", "page", "type", "x", "y"]),
+		values: ordered(rows.values, ["fieldId", "id", "value"]),
+		events: ordered(rows.events, ["createdAt", "id", "eventType", "message"]),
+	};
 }
 
 function drawFieldValues(
@@ -74,37 +103,118 @@ function drawFieldValues(
 	font: PDFFont,
 	boldFont: PDFFont,
 	signatureFont: PDFFont,
-): void {
+	placeholderFont: PDFFont,
+): OverflowFieldValue[] {
+	const overflow: OverflowFieldValue[] = [];
 	const valueByField = new Map(
 		rows.values.map((value) => [stringValue(value, "fieldId"), stringValue(value, "value")]),
 	);
 	for (const field of rows.fields) {
 		const value = valueByField.get(stringValue(field, "id"))?.trim();
-		if (!value) continue;
-		const page = getOrAddPage(pdf, numberValue(field, "page", 1));
+		const placeholder = field.isPlaceholder === true;
+		if (!value && !placeholder) continue;
+		const page = getSourcePage(pdf, numberValue(field, "page", 1));
 		const box = fieldBoxOnPage(field, page);
-		if (stringValue(field, "type") === "signature") {
-			drawSignatureStamp(page, value, box, boldFont, signatureFont);
-			continue;
+		const type = stringValue(field, "type");
+		const signaturePath = type === "signature" && value && looksLikeSvgPath(value);
+		const continuation =
+			placeholder && value && needsContinuation(type, value, box, placeholderFont);
+		if (continuation && value) {
+			overflow.push({
+				page: numberValue(field, "page", 1),
+				name: stringValue(field, "name") || "Field",
+				value,
+				...(signaturePath ? { kind: "signature" as const } : {}),
+			});
 		}
-		page.drawRectangle({
-			x: box.x,
-			y: box.y,
-			width: box.width,
-			height: box.height,
-			borderColor: rgb(0.05, 0.3, 0.75),
-			borderWidth: 0.5,
-		});
-		const size = Math.min(12, box.height * 0.45);
-		page.drawText(value, {
-			x: box.x + 4,
-			y: box.y + Math.max(4, (box.height - size) / 2),
-			size,
+		drawField(page, box, type, continuation ? `[${overflow.length}]` : value, placeholder, {
 			font,
-			color: rgb(0.05, 0.05, 0.05),
-			maxWidth: Math.max(12, box.width - 8),
+			boldFont,
+			signatureFont,
+			placeholderFont,
 		});
 	}
+	return overflow;
+}
+
+function needsContinuation(
+	type: string,
+	value: string,
+	box: { width: number; height: number },
+	font: PDFFont,
+): boolean {
+	if (type === "checkbox") return false;
+	if (type === "signature" && looksLikeSvgPath(value)) return box.height < 32 || box.width < 100;
+	return fieldValueNeedsContinuation(value, box, font);
+}
+
+function drawField(
+	page: PDFPage,
+	box: { x: number; y: number; width: number; height: number },
+	type: string,
+	value: string | undefined,
+	placeholder: boolean,
+	fonts: { font: PDFFont; boldFont: PDFFont; signatureFont: PDFFont; placeholderFont: PDFFont },
+): void {
+	// This visual overlay is not redaction of the underlying PDF text.
+	if (placeholder) page.drawRectangle({ ...box, color: rgb(1, 1, 1) });
+	if (!value) return;
+	if (type === "checkbox") {
+		if (value === "true") drawCheckbox(page, box);
+		return;
+	}
+	if (type === "signature") {
+		if (!placeholder) drawSignatureStamp(page, value, box, fonts.boldFont, fonts.signatureFont);
+		else if (looksLikeSvgPath(value)) drawSignaturePath(page, value, box);
+		else drawFittedText(page, value, box, fonts.placeholderFont);
+		return;
+	}
+	if (placeholder) {
+		drawFittedText(page, value, box, fonts.placeholderFont);
+		return;
+	}
+	page.drawRectangle({ ...box, borderColor: rgb(0.05, 0.3, 0.75), borderWidth: 0.5 });
+	const size = Math.min(12, box.height * 0.45);
+	page.drawText(value, {
+		x: box.x + 4,
+		y: box.y + Math.max(4, (box.height - size) / 2),
+		size,
+		font: fonts.font,
+		color: rgb(0.05, 0.05, 0.05),
+		maxWidth: Math.max(12, box.width - 8),
+	});
+}
+
+function drawFittedText(
+	page: PDFPage,
+	value: string,
+	box: { x: number; y: number; width: number; height: number },
+	font: PDFFont,
+): void {
+	const singleLine = value.replace(/[\r\n]+/g, " ");
+	const maxHeight = Math.max(0.1, box.height * 0.8);
+	const unitWidth = font.widthOfTextAtSize(singleLine, 1);
+	const size = Math.max(0.01, Math.min(12, maxHeight, box.width / Math.max(1, unitWidth)));
+	page.drawText(singleLine, {
+		x: box.x,
+		y: box.y + Math.max(0, (box.height - size) / 2),
+		size,
+		font,
+		color: rgb(0.05, 0.05, 0.05),
+	});
+}
+
+function drawCheckbox(
+	page: PDFPage,
+	box: { x: number; y: number; width: number; height: number },
+): void {
+	const side = Math.min(box.width, box.height) * 0.8;
+	const x = box.x + (box.width - side) / 2;
+	const y = box.y + (box.height - side) / 2;
+	const color = rgb(0.05, 0.05, 0.05);
+	page.drawRectangle({ x, y, width: side, height: side, borderColor: color, borderWidth: 0.7 });
+	page.drawLine({ start: { x, y }, end: { x: x + side, y: y + side }, color, thickness: 0.7 });
+	page.drawLine({ start: { x, y: y + side }, end: { x: x + side, y }, color, thickness: 0.7 });
 }
 
 function drawSignatureStamp(
@@ -162,7 +272,7 @@ function drawSignatureStamp(
 		color: accent,
 	});
 
-	const caption = "by auditmos.com";
+	const caption = "sign.amerged.com";
 	const captionSize = 5.5;
 	const captionWidth = boldFont.widthOfTextAtSize(caption, captionSize);
 	page.drawText(caption, {
@@ -285,10 +395,14 @@ function signaturePathBounds(
 	};
 }
 
-function getOrAddPage(pdf: PDFDocument, pageNumber: number): PDFPage {
-	const pageIndex = Math.max(0, pageNumber - 1);
-	while (pdf.getPageCount() <= pageIndex) pdf.addPage([612, 792]);
-	return pdf.getPage(pageIndex);
+function getSourcePage(pdf: PDFDocument, pageNumber: number): PDFPage {
+	if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pdf.getPageCount()) {
+		throw new FinalPdfRenderError(
+			"FIELD_PAGE_MISSING",
+			"A signing field refers to a page missing from the source PDF.",
+		);
+	}
+	return pdf.getPage(pageNumber - 1);
 }
 
 function fieldBoxOnPage(
@@ -362,5 +476,6 @@ function numberValue(
 }
 
 function looksLikeSvgPath(value: string): boolean {
-	return /^[MmLlHhVvCcSsQqTtAaZz0-9,.\s-]+$/.test(value.trim());
+	const trimmed = value.trim();
+	return /^[Mm]\s*-?\d/.test(trimmed) && /^[MmLlHhVvCcSsQqTtAaZz0-9,.\s-]+$/.test(trimmed);
 }

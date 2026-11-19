@@ -1,2 +1,2 @@
 export { clients } from "./schema";
-export { getDb, initDatabase } from "./setup";
+export { getDb, withDatabase } from "./setup";

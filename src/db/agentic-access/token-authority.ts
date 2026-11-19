@@ -31,9 +31,15 @@ export async function generateAgenticToken(input: {
 	session: { id: string; email: string };
 	name: string;
 	requestIp?: string;
+	/** Bound HTTP contention retries without changing the five active-token slots. */
+	maximumAttempts?: number;
 }): Promise<GeneratedAgenticToken> {
 	const name = input.name.trim();
-	const generated = await insertIntoAvailableSlot({ email: input.session.email, name });
+	const generated = await insertIntoAvailableSlot({
+		email: input.session.email,
+		name,
+		maximumAttempts: input.maximumAttempts,
+	});
 	const { secret, token } = generated;
 	await appendAgenticSecurityEvent({
 		sessionId: input.session.id,
@@ -55,9 +61,17 @@ export async function generateAgenticToken(input: {
 	};
 }
 
-async function insertIntoAvailableSlot(input: { email: string; name: string }) {
+async function insertIntoAvailableSlot(input: {
+	email: string;
+	name: string;
+	maximumAttempts?: number;
+}) {
 	const db = getDb();
-	for (let attempt = 0; attempt < agenticActiveTokenLimit; attempt += 1) {
+	for (
+		let attempt = 0;
+		attempt < Math.min(agenticActiveTokenLimit, input.maximumAttempts ?? agenticActiveTokenLimit);
+		attempt += 1
+	) {
 		const rows = await db
 			.select()
 			.from(agenticApiTokens)

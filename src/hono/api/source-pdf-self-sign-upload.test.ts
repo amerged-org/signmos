@@ -10,6 +10,7 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes } from "@/test/pdf-fixtures";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -191,9 +192,7 @@ describe("source PDF self-sign upload API", () => {
 		// - A detected PDF page count provides the default-field page; unknown counts fall back to page 1.
 		// - Self-signing uses fixed default field geometry in this slice, without exposing adjustment controls.
 		// - The internal envelope can become sent so existing signing endpoints work, but no visible send action is required.
-		const pdfBytes = new TextEncoder().encode(
-			"%PDF-1.7\n1 0 obj << /Type /Pages /Count 3 >> endobj\n%%EOF",
-		);
+		const pdfBytes = pdfFixtureBytes("Self-sign agreement", 3);
 
 		const response = await apiHono.request(
 			"/api/envelopes/00000000-0000-4000-8000-000000000001/source-pdf",

@@ -37,12 +37,12 @@ describe("SignerPage self-sign mode", () => {
 
 		render(<SignerPage token="self-sign-token" />);
 
-		await screen.findByRole("button", { name: "Complete signing" });
-		expect(screen.queryByLabelText("Change request comment")).toBeNull();
-		expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
-		expect(screen.queryByLabelText("Decline reason")).toBeNull();
-		expect(screen.queryByLabelText("Comment")).toBeNull();
-		expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+		await screen.findByRole("button", { name: "Jetzt unterschreiben" });
+		expect(screen.queryByLabelText("Gewünschte Änderung")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Änderung anfragen" })).toBeNull();
+		expect(screen.queryByLabelText("Grund für die Ablehnung")).toBeNull();
+		expect(screen.queryByLabelText("Kommentar")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Ablehnen" })).toBeNull();
 	});
 
 	it("drags signature and date placeholders on the PDF preview", async () => {
@@ -91,7 +91,7 @@ describe("SignerPage self-sign mode", () => {
 
 		render(<SignerPage token="self-sign-token" />);
 
-		const page = await screen.findByLabelText("Source PDF page 1");
+		const page = await screen.findByLabelText("Vertrag Seite 1");
 		vi.spyOn(page, "getBoundingClientRect").mockReturnValue({
 			x: 0,
 			y: 0,
@@ -103,14 +103,14 @@ describe("SignerPage self-sign mode", () => {
 			height: 396,
 			toJSON: () => ({}),
 		});
-		fireEvent.mouseDown(screen.getByLabelText("Signer signature placeholder"), {
+		fireEvent.mouseDown(screen.getByLabelText("Unterzeichner · Unterschrift · Feld"), {
 			clientX: 36,
 			clientY: 72,
 		});
 		fireEvent.mouseMove(page, { clientX: 48, clientY: 96 });
 		fireEvent.mouseUp(page);
 
-		fireEvent.mouseDown(screen.getByLabelText("Signer date placeholder"), {
+		fireEvent.mouseDown(screen.getByLabelText("Unterzeichner · Datum · Feld"), {
 			clientX: 150,
 			clientY: 72,
 		});

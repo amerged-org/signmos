@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import { assertPdfFieldCount } from "./pdf-policy";
 import {
 	type AddFieldsRequest,
 	type AddRecipientsRequest,
@@ -241,20 +242,39 @@ export async function addFields(
 	}
 
 	const existingFields = await listEnvelopeFields(envelopeId);
-	const signatureRecipientIds = new Set(
-		existingFields.filter((field) => field.type === "signature").map((field) => field.recipientId),
-	);
+	assertPdfFieldCount(existingFields.length + input.fields.length);
+	const signatures = existingFields.filter((field) => field.type === "signature");
 	for (const field of input.fields) {
 		if (field.type !== "signature") continue;
-		if (signatureRecipientIds.has(field.recipientId)) {
+		if (
+			signatures.some(
+				(prior) =>
+					prior.recipientId === field.recipientId &&
+					!(prior.isPlaceholder && field.isPlaceholder && prior.name && field.name),
+			)
+		) {
 			throw new SignaturePlaceholderLimitError();
 		}
-		signatureRecipientIds.add(field.recipientId);
+		signatures.push(
+			EnvelopeFieldSchema.parse({
+				...field,
+				envelopeId,
+				id: crypto.randomUUID(),
+				createdAt: new Date(),
+			}),
+		);
 	}
 
 	const rows = await db
 		.insert(envelopeFields)
-		.values(input.fields.map((field) => ({ ...field, envelopeId })))
+		.values(
+			input.fields.map((field) => ({
+				...field,
+				required: field.required ?? true,
+				isPlaceholder: field.isPlaceholder ?? false,
+				envelopeId,
+			})),
+		)
 		.returning();
 	return rows.map((field) => EnvelopeFieldSchema.parse(field));
 }

@@ -7,6 +7,7 @@ import {
 	toAbsoluteDeliveryUrl,
 } from "@/db/envelope/email-delivery";
 import { getDb } from "@/db/setup";
+import { renderBrandedEmail } from "@/lib/branded-email";
 import { assertHistoryRequestRateLimits } from "./request-abuse";
 import { appendHistorySecurityEvent } from "./security-audit";
 import { historyAccessLinks, historyAccessRequests, historyEmailRecords } from "./table";
@@ -156,9 +157,16 @@ export async function requestHistoryAccess(
 export function buildHistoryAccessEmail(input: { email: string; accessUrl: string }) {
 	return {
 		to: input.email,
-		subject: "Access your Signmos documents",
+		subject: "Access your amerged Sign documents",
 		text: `Open your secure My documents link:\n${input.accessUrl}\n\nThis link expires in 30 minutes and can be used once. If you did not request it, ignore this email.`,
-		html: `<p>Open your secure My documents link.</p><p><a href="${escapeHtml(input.accessUrl)}">View My documents</a></p><p>This link expires in 30 minutes and can be used once.</p><p>If you did not request it, ignore this email.</p>`,
+		html: renderBrandedEmail({
+			lang: "en",
+			eyebrow: "My documents",
+			title: "Your secure link",
+			paragraphs: ["Open your secure My documents link."],
+			action: { label: "View My documents", url: input.accessUrl },
+			note: "This link expires in 30 minutes and can be used once. If you did not request it, ignore this email.",
+		}),
 	};
 }
 
@@ -211,12 +219,4 @@ async function hasMatchingRetainedEnvelope(email: string): Promise<boolean> {
 
 function acceptedWithoutCredential(): HistoryAccessRequestResult {
 	return { status: "accepted", accessUrl: null };
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;");
 }

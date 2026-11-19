@@ -7,7 +7,7 @@ import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type * as React from "react";
 import { DefaultCatchBoundary } from "@/components/default-catch-boundary";
 import { NotFound } from "@/components/not-found";
-import { ThemeProvider } from "@/components/theme";
+import { LanguageProvider, useLanguage } from "@/lib/i18n";
 import appCss from "@/styles.css?url";
 import { seo } from "@/utils/seo";
 
@@ -25,17 +25,11 @@ export const Route = createRootRouteWithContext<{
 			},
 			{
 				name: "theme-color",
-				media: "(prefers-color-scheme: light)",
-				content: "#fafbfd",
-			},
-			{
-				name: "theme-color",
-				media: "(prefers-color-scheme: dark)",
-				content: "#14161f",
+				content: "#ffffff",
 			},
 			...seo({
-				title: "Signmos | No-Account PDF Signatures",
-				description: "Start a no-account PDF signature envelope and verify by email.",
+				title: "amerged Sign",
+				description: "Verträge sicher versenden, unterschreiben und verwalten.",
 				image: "/signmos-og.png",
 			}),
 		],
@@ -49,14 +43,8 @@ export const Route = createRootRouteWithContext<{
 			{
 				rel: "icon",
 				type: "image/png",
-				sizes: "32x32",
-				href: "/favicon-32x32.png",
-			},
-			{
-				rel: "icon",
-				type: "image/png",
-				sizes: "16x16",
-				href: "/favicon-16x16.png",
+				sizes: "512x512",
+				href: "/logo512.png",
 			},
 			{ rel: "manifest", href: "/manifest.json" },
 			{ rel: "icon", href: "/favicon.ico" },
@@ -76,28 +64,30 @@ export const Route = createRootRouteWithContext<{
 function RootComponent() {
 	return (
 		<RootDocument>
-			<ThemeProvider
-				attribute="class"
-				defaultTheme="system"
-				enableSystem
-				disableTransitionOnChange={false}
-			>
-				<Outlet />
-			</ThemeProvider>
+			<Outlet />
 		</RootDocument>
 	);
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en">
+		<LanguageProvider>
+			<LocalizedDocument>{children}</LocalizedDocument>
+		</LanguageProvider>
+	);
+}
+
+function LocalizedDocument({ children }: { children: React.ReactNode }) {
+	const { language } = useLanguage();
+	return (
+		<html lang={language}>
 			<head>
 				<HeadContent />
 			</head>
 			<body>
 				{children}
-				<TanStackRouterDevtools position="bottom-right" />
-				<ReactQueryDevtools buttonPosition="bottom-left" />
+				{import.meta.env.DEV && <TanStackRouterDevtools position="bottom-right" />}
+				{import.meta.env.DEV && <ReactQueryDevtools buttonPosition="bottom-left" />}
 				<Scripts />
 			</body>
 		</html>

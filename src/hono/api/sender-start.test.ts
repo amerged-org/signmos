@@ -379,7 +379,7 @@ describe("sender start API", () => {
 				from: "Signmos <sign@signmos.example>",
 				reply_to: "support@signmos.example",
 				to: ["ada@example.com"],
-				subject: "Verify your email to start signing",
+				subject: "E-Mail-Adresse bestätigen · amerged Sign",
 			}),
 		);
 		expect(requestBody.html).toContain("https://signmos.example/sender-verifications/");

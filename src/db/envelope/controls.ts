@@ -1,5 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/setup";
+import { envelopeArtifactVersions } from "./artifact-versions";
 import {
 	EnvelopeSchema,
 	type EnvelopeStatus,
@@ -9,6 +10,7 @@ import {
 	SignerTokenSchema,
 	SourceDocumentSchema,
 } from "./schema";
+import { noEnvelopeDeletion, signingBatch, signingStatement } from "./signing-batch";
 import {
 	auditEvents,
 	emailSendRecords,
@@ -56,6 +58,38 @@ export async function controlEnvelope(
 	options: { documentsBucket?: R2Bucket } = {},
 ): Promise<EnvelopeControlResult> {
 	const envelope = await getRequiredEnvelope(envelopeId);
+	// The object upload is not part of a database transaction. Do not erase a
+	// document while an upload may still be creating its immutable object.
+	if (
+		envelope.status === "preparing" &&
+		(action !== "delete" || Date.now() - envelope.createdAt.getTime() < 10 * 60_000)
+	) {
+		throw new EnvelopeControlError("ENVELOPE_ACTION_BLOCKED", envelope.status, []);
+	}
+	if (envelope.status === "queued" && action === "cancel") {
+		const db = getDb();
+		await signingBatch([
+			signingStatement(sql`select id from envelopes where id = ${envelopeId} for update`),
+			signingStatement(
+				sql`select 1 / case when exists (select 1 from envelopes where id = ${envelopeId} and status in ('queued', 'sent')) then 1 else 0 end as guard`,
+			),
+			signingStatement(
+				sql`update envelopes set status = 'expired' where id = ${envelopeId} and status in ('queued', 'sent')`,
+			),
+			signingStatement(
+				sql`delete from contract_invitation_outbox where envelope_id = ${envelopeId}`,
+			),
+			db
+				.insert(auditEvents)
+				.values({ envelopeId, recipientId: null, eventType: "envelope.canceled", message: actor }),
+		]);
+		return {
+			envelopeId,
+			action,
+			status: "expired",
+			allowedActions: getEnvelopeAllowedActions("expired"),
+		};
+	}
 	if (action === "cancel" || action === "expire") {
 		return expireActiveEnvelope({
 			envelopeId,
@@ -193,38 +227,105 @@ async function deleteEnvelope(input: {
 	}
 
 	const db = getDb();
-	const sources = (
-		await db
-			.select()
-			.from(sourceDocuments)
-			.where(eq(sourceDocuments.envelopeId, input.envelopeId))
-			.limit(100)
-	).map((document) => SourceDocumentSchema.parse(document));
-	const finals = (
-		await db
-			.select()
-			.from(finalDocuments)
-			.where(eq(finalDocuments.envelopeId, input.envelopeId))
-			.limit(100)
-	).map((document) => FinalDocumentSchema.parse(document));
-	for (const key of [
-		...sources.map((document) => document.r2Key),
-		...finals.map((document) => document.r2Key),
-	]) {
-		await input.documentsBucket?.delete(key);
+	// Serialize intent against final manifest registration before enumerating files.
+	// A failed erasure keeps its prior status and this same durable intent for retry.
+	await signingBatch([
+		signingStatement(sql`select id from envelopes where id = ${input.envelopeId} for update`),
+		signingStatement(sql`/* signing-delete-intent */
+		with locked as (select id from envelopes where id = ${input.envelopeId} for update)
+		insert into audit_events(envelope_id, recipient_id, event_type, message)
+		select id, null, 'envelope.deletion_started', ${input.actor} from locked
+		where ${noEnvelopeDeletion(input.envelopeId)}`),
+	]);
+	const [sourceRows = [], finalRows = [], versions = [], recipientRows = [], tokenRows = []] =
+		await signingBatch([
+			{
+				table: sourceDocuments,
+				query: db
+					.select()
+					.from(sourceDocuments)
+					.where(eq(sourceDocuments.envelopeId, input.envelopeId))
+					.limit(100),
+			},
+			{
+				table: finalDocuments,
+				query: db
+					.select()
+					.from(finalDocuments)
+					.where(eq(finalDocuments.envelopeId, input.envelopeId))
+					.limit(100),
+			},
+			{
+				table: envelopeArtifactVersions,
+				query: db
+					.select()
+					.from(envelopeArtifactVersions)
+					.where(eq(envelopeArtifactVersions.envelopeId, input.envelopeId))
+					.limit(4001),
+			},
+			{
+				table: envelopeRecipients,
+				query: db
+					.select()
+					.from(envelopeRecipients)
+					.where(eq(envelopeRecipients.envelopeId, input.envelopeId))
+					.limit(100),
+			},
+			{
+				table: signerTokens,
+				query: db
+					.select()
+					.from(signerTokens)
+					.where(eq(signerTokens.envelopeId, input.envelopeId))
+					.limit(100),
+			},
+		]);
+	if (versions.length > 4000)
+		throw new Error("Document has too many stored versions for one deletion request");
+	const sources = sourceRows.map((row) => SourceDocumentSchema.parse(row));
+	const finals = finalRows.map((row) => FinalDocumentSchema.parse(row));
+	const keys = [
+		...new Set([
+			...sources.map((document) => document.r2Key),
+			...finals.map((document) => document.r2Key),
+			...versions.map((row) => String(row.r2Key)),
+		]),
+	];
+	if (keys.length > 0) {
+		if (!input.documentsBucket)
+			throw new Error("Private document storage is required for deletion");
+		await input.documentsBucket.delete(keys);
 	}
-
-	await db.update(envelopes).set({ status: "deleted" }).where(eq(envelopes.id, input.envelopeId));
-	await db
-		.insert(auditEvents)
-		.values({
+	const tokens = tokenRows.map((row) => SignerTokenSchema.parse(row));
+	const recipients = recipientRows.map((row) => RecipientSchema.parse(row));
+	const records = recipients.flatMap((recipient) => {
+		const token = latestSignerToken(tokens, recipient.id);
+		return token
+			? [
+					{
+						envelopeId: input.envelopeId,
+						recipientId: recipient.id,
+						tokenId: token.id,
+						email: recipient.email,
+						kind: "delete",
+						fallbackUrl: `/signing/${token.token}`,
+					},
+				]
+			: [];
+	});
+	await signingBatch([
+		db.update(envelopes).set({ status: "deleted" }).where(eq(envelopes.id, input.envelopeId)),
+		signingStatement(
+			sql`delete from contract_invitation_outbox where envelope_id = ${input.envelopeId}`,
+		),
+		db.insert(auditEvents).values({
 			envelopeId: input.envelopeId,
 			recipientId: null,
 			eventType: "envelope.deleted",
 			message: input.actor,
-		})
-		.returning();
-	await recordRecipientNotification({ envelopeId: input.envelopeId, kind: "delete" });
+		}),
+		...(records.length ? [db.insert(emailSendRecords).values(records)] : []),
+	]);
 
 	return {
 		envelopeId: input.envelopeId,
@@ -237,12 +338,13 @@ async function deleteEnvelope(input: {
 async function getRequiredEnvelope(envelopeId: string): Promise<{
 	id: string;
 	status: EnvelopeStatus;
+	createdAt: Date;
 }> {
 	const db = getDb();
 	const [envelope] = await db.select().from(envelopes).where(eq(envelopes.id, envelopeId)).limit(1);
 	if (!envelope) throw new Error("Envelope not found");
 	const parsed = EnvelopeSchema.parse(envelope);
-	return { id: parsed.id, status: parsed.status };
+	return { id: parsed.id, status: parsed.status, createdAt: parsed.createdAt };
 }
 
 async function getTerminalTimestamp(

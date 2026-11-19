@@ -76,7 +76,7 @@ describe("SourcePdfUploadPanel self-sign mode", () => {
 					JSON.stringify({
 						error: {
 							code: "SOURCE_PDF_TOO_LARGE",
-							message: "Source PDF must be under 10 MB",
+							message: "Source PDF must be at most 2 MiB",
 						},
 					}),
 					{ status: 413 },
@@ -100,7 +100,7 @@ describe("SourcePdfUploadPanel self-sign mode", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Upload selected PDF" }));
 
 		const alert = await screen.findByRole("alert");
-		expect(alert.textContent).toContain("Source PDF must be under 10 MB");
+		expect(alert.textContent).toContain("Source PDF must be at most 2 MiB");
 	});
 });
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { SignerPage } from "@/components/signing/signer-page";
 
 const envelopeId = "00000000-0000-4000-8000-000000000040";
@@ -44,35 +44,41 @@ describe("recovered signer accessibility", () => {
 
 		render(<SignerPage historyEnvelopeId={envelopeId} />);
 
-		expect(await screen.findByRole("heading", { name: "Review and sign" })).toBeTruthy();
-		expect(screen.getByRole("link", { name: "Open source PDF" }).getAttribute("href")).toBe(
+		expect(await screen.findByRole("heading", { name: "Vertrag unterschreiben" })).toBeTruthy();
+		expect(screen.getByRole("link", { name: "PDF öffnen" }).getAttribute("href")).toBe(
 			`/api/history/documents/${envelopeId}/signing/source-pdf`,
 		);
-		expect(screen.getByLabelText("Typed signature text")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "Complete signing" })).toBeTruthy();
-		expect(screen.getByLabelText("Change request comment")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "Request changes" })).toBeTruthy();
-		expect(screen.getByLabelText("Decline reason")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "Decline" })).toBeTruthy();
+		expect(screen.getByLabelText("Dein vollständiger Name")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Jetzt unterschreiben" })).toBeTruthy();
+		fireEvent.click(screen.getByText("Weitere Optionen"));
+		expect(screen.getByLabelText("Änderung")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Änderung anfragen" })).toBeTruthy();
+		expect(screen.getByLabelText("Grund")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Ablehnen" })).toBeTruthy();
 		expect(fetchMock).toHaveBeenCalledWith(`/api/history/documents/${envelopeId}/signing`);
 		expect(document.body.textContent).not.toContain("invitation-token");
 	});
 
 	it.each([
-		["expired", "This document expired"],
-		["declined", "This document was declined"],
-		["deleted", "This document was deleted"],
-	])("renders the %s terminal state without signing mutations", async (_state, message) => {
+		["expired", "HISTORY_SIGNING_EXPIRED", "Dieser Link ist abgelaufen."],
+		["declined", "HISTORY_SIGNING_DECLINED", "Abgelehnt."],
+		["deleted", "HISTORY_SIGNING_DELETED", "Dieser Vertrag ist nicht mehr verfügbar."],
+	])("renders the %s terminal state without signing mutations", async (_state, code, message) => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () => new Response(JSON.stringify({ error: { message } }), { status: 410 })),
+			vi.fn(
+				async () =>
+					new Response(JSON.stringify({ error: { code, message: "Server message" } }), {
+						status: 410,
+					}),
+			),
 		);
 		render(<SignerPage historyEnvelopeId={envelopeId} />);
 
 		expect(await screen.findByText(message)).toBeTruthy();
-		expect(screen.queryByRole("button", { name: "Complete signing" })).toBeNull();
-		expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
-		expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Jetzt unterschreiben" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Änderung anfragen" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Ablehnen" })).toBeNull();
 	});
 
 	it("renders session-protected completion actions", async () => {
@@ -94,8 +100,8 @@ describe("recovered signer accessibility", () => {
 		);
 		render(<SignerPage historyEnvelopeId={envelopeId} />);
 
-		expect(await screen.findByText("Document complete")).toBeTruthy();
-		expect(screen.getByRole("link", { name: "View completed document" })).toBeTruthy();
-		expect(screen.getByRole("link", { name: "Download final PDF" })).toBeTruthy();
+		expect(await screen.findByText("Vertrag abgeschlossen")).toBeTruthy();
+		expect(screen.getByRole("link", { name: "Vertrag ansehen" })).toBeTruthy();
+		expect(screen.getByRole("link", { name: "PDF herunterladen" })).toBeTruthy();
 	});
 });

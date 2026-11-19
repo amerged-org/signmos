@@ -6,23 +6,25 @@ import { defineConfig } from "vite";
 import viteTsConfigPaths from "vite-tsconfig-paths";
 
 const config = defineConfig({
+	// ohmyho.st accepts Worker modules but rejects source maps in its server artifact.
+	environments: { ssr: { build: { sourcemap: false, minify: "esbuild" } } },
 	plugins: [
 		// this is the plugin that enables path aliases
 		viteTsConfigPaths({
 			projects: ["./tsconfig.json"],
 		}),
 		tailwindcss(),
+		cloudflare({
+			viteEnvironment: {
+				name: "ssr",
+			},
+		}),
 		tanstackStart({
 			srcDirectory: "src",
 			start: { entry: "./start.tsx" },
 			server: { entry: "./server.ts" },
 		}),
 		viteReact(),
-		cloudflare({
-			viteEnvironment: {
-				name: "ssr",
-			},
-		}),
 	],
 });
 

@@ -13,6 +13,7 @@ import {
 } from "@/db/envelope";
 import { hashHistoryCredential, historySecurityEvents, historySessions } from "@/db/history-access";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes } from "@/test/pdf-fixtures";
 
 type StoredRow = Record<string, unknown>;
 const envelopeId = "00000000-0000-4000-8000-000000000040";
@@ -40,32 +41,39 @@ function updateRows(table: unknown, values: StoredRow): StoredRow[] {
 	Object.assign(row, values);
 	return [row];
 }
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({ from: (table: unknown) => selectQuery(table) }),
-		insert: (table: unknown) => ({
-			values: (values: StoredRow | StoredRow[]) => ({
-				returning: async () => {
-					const inserted = (Array.isArray(values) ? values : [values]).map((value) => ({
-						id: crypto.randomUUID(),
-						createdAt: new Date(now),
-						...value,
-					}));
-					rowsFor(table).push(...inserted);
-					return inserted;
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({ from: (table: unknown) => selectQuery(table) }),
+					insert: (table: unknown) => ({
+						values: (values: StoredRow | StoredRow[]) => ({
+							returning: async () => {
+								const inserted = (Array.isArray(values) ? values : [values]).map((value) => ({
+									id: crypto.randomUUID(),
+									createdAt: new Date(now),
+									...value,
+								}));
+								rowsFor(table).push(...inserted);
+								return inserted;
+							},
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (values: StoredRow) => ({
+							where: () => {
+								const updated = updateRows(table, values);
+								return Object.assign(Promise.resolve([]), { returning: async () => updated });
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (values: StoredRow) => ({
-				where: () => {
-					const updated = updateRows(table, values);
-					return Object.assign(Promise.resolve([]), { returning: async () => updated });
-				},
-			}),
-		}),
-	}),
-}));
+				rowsFor,
+			),
+	};
+});
 function tableRows(name: string): StoredRow[] {
 	const table = state.tables.get(name);
 	if (!table) throw new Error(`Missing test table ${name}`);
@@ -154,7 +162,7 @@ async function resetState() {
 	);
 	for (const version of [1, 2]) {
 		const key = `envelopes/${envelopeId}/source-v${version}.pdf`;
-		const bytes = new TextEncoder().encode(`%PDF-1.7 source-v${version}\n%%EOF`);
+		const bytes = pdfFixtureBytes(`source-v${version}`);
 		tableRows("sources").push({
 			id: `10000000-0000-4000-8000-00000000004${version}`,
 			envelopeId,
@@ -422,7 +430,7 @@ describe("history-session signer recovery", () => {
 		expect(tableRows("fieldValues")).toHaveLength(0);
 	});
 
-	it("keeps the existing verified invitation-link contract unchanged", async () => {
+	it("requires a new email proof for legacy verified invitation links", async () => {
 		Object.assign(tableRows("tokens")[0] ?? {}, {
 			verifiedAt: new Date("2026-07-16T08:10:00.000Z"),
 			expiresAt: new Date("2026-07-18T08:10:00.000Z"),
@@ -430,15 +438,15 @@ describe("history-session signer recovery", () => {
 		const response = await apiHono.request(`/api/signing/${tokenValue}`, {
 			headers: { "x-now": now },
 		});
-		expect(response.status).toBe(200);
+		expect(response.status).toBe(403);
 		const body = await response.json();
 		expect(body).toEqual({
-			data: expect.objectContaining({
-				sourceDocument: expect.objectContaining({
-					downloadUrl: `/api/signing/${tokenValue}/source-pdf`,
-				}),
+			error: expect.objectContaining({
+				code: "PARTNER_VERIFICATION_REQUIRED",
+				verificationUrl: `/signing-verifications/${tokenValue}`,
 			}),
 		});
+		expect(body).not.toHaveProperty("data");
 	});
 
 	it("returns tokenless completed links and audits the history final-PDF download", async () => {

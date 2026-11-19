@@ -211,34 +211,41 @@ function updateRecipientStatuses(value: UpdateValue) {
 	);
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: unknown[] | unknown) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: UpdateValue) => ({
-				where: async () => updateRows(table, value),
-			}),
-		}),
-		delete: (table: unknown) => ({
-			where: async () => {
-				if (table === state.fieldsTable) state.fields.length = 0;
-				if (table === state.recipientsTable) state.recipients.length = 0;
-				return [];
-			},
-		}),
-	}),
-}));
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: unknown[] | unknown) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: UpdateValue) => ({
+							where: async () => updateRows(table, value),
+						}),
+					}),
+					delete: (table: unknown) => ({
+						where: async () => {
+							if (table === state.fieldsTable) state.fields.length = 0;
+							if (table === state.recipientsTable) state.recipients.length = 0;
+							return [];
+						},
+					}),
+				},
+				selectRows,
+			),
+	};
+});
 
 function applyRecipientStatusUpdate(
 	recipient: (typeof state.recipients)[number],
@@ -744,7 +751,7 @@ describe("envelope recipient API", () => {
 		expect(body).toEqual(
 			expect.objectContaining({
 				to: ["grace@example.com"],
-				subject: "Verify your email to sign this document",
+				subject: "Deine Unterschrift wird benötigt · amerged Sign",
 				html: expect.stringContaining("https://signmos.example/signing-verifications/"),
 			}),
 		);
@@ -811,7 +818,7 @@ describe("envelope recipient API", () => {
 				from: "Signmos <sign@signmos.example>",
 				reply_to: "support@signmos.example",
 				to: ["ada@example.com"],
-				subject: "Verify your email to sign this document",
+				subject: "Deine Unterschrift wird benötigt · amerged Sign",
 			}),
 		);
 		expect(requestBody.html).toContain("https://signmos.example/signing-verifications/");
@@ -964,7 +971,7 @@ describe("envelope recipient API", () => {
 		expect(requestBody).toEqual(
 			expect.objectContaining({
 				to: ["ada@example.com"],
-				subject: "Verify your email to sign this document",
+				subject: "Deine Unterschrift wird benötigt · amerged Sign",
 			}),
 		);
 		expect(requestBody.html).toContain("https://signmos.example/signing-verifications/");

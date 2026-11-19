@@ -10,7 +10,10 @@ import {
 	signerTokens,
 	sourceDocuments,
 } from "@/db/envelope";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes } from "@/test/pdf-fixtures";
+import { signerEmailRequest, signerEmailSessionFixtures } from "@/test/signer-email-fixture";
 
 const envelopeId = "00000000-0000-4000-8000-000000000001";
 const recipientId = "20000000-0000-4000-8000-000000000001";
@@ -39,6 +42,8 @@ const state = vi.hoisted(() => ({
 }));
 
 function selectRows(table: unknown): Array<Record<string, unknown>> {
+	if (table === signerEmailSessions)
+		return signerEmailSessionFixtures(state.tokens, state.recipients);
 	if (table === state.envelopesTable) return state.envelopes;
 	if (table === state.recipientsTable) return state.recipients;
 	if (table === state.fieldsTable) return state.fields;
@@ -72,35 +77,42 @@ function insertFinalDocuments(rows: Array<Record<string, unknown>>) {
 	return inserted;
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: { status?: string }) => ({
-				where: async () => {
-					if (table === state.recipientsTable) {
-						state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
-					}
-					if (table === state.envelopesTable) {
-						state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
-					}
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: { status?: string }) => ({
+							where: async () => {
+								if (table === state.recipientsTable) {
+									state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
+								}
+								if (table === state.envelopesTable) {
+									state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
+								}
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("self-sign completion detail links", () => {
 	beforeEach(() => {
@@ -124,7 +136,8 @@ describe("self-sign completion detail links", () => {
 		// - History table, cancel/delete controls, and new email providers are out of scope.
 		const bucket = bucketStub();
 
-		const complete = await apiHono.request(
+		const complete = await signerEmailRequest(
+			apiHono,
 			`/api/signing/${signerTokenValue}/complete`,
 			{
 				method: "POST",
@@ -172,7 +185,7 @@ describe("self-sign completion detail links", () => {
 		);
 
 		state.tokens[0] = { ...state.tokens[0], verifiedAt: null };
-		const signingLink = await apiHono.request(`/api/signing/${signerTokenValue}`, {
+		const signingLink = await signerEmailRequest(apiHono, `/api/signing/${signerTokenValue}`, {
 			headers: { "x-now": "2026-05-23T08:05:00.000Z" },
 		});
 		expect(signingLink.status).toBe(200);
@@ -185,7 +198,7 @@ describe("self-sign completion detail links", () => {
 			},
 		});
 
-		const detail = await apiHono.request(`/api/final-documents/${signerTokenValue}`, {
+		const detail = await signerEmailRequest(apiHono, `/api/final-documents/${signerTokenValue}`, {
 			headers: { "x-now": "2026-05-23T08:05:00.000Z" },
 		});
 		expect(detail.status).toBe(200);
@@ -205,7 +218,8 @@ describe("self-sign completion detail links", () => {
 			}),
 		});
 
-		const download = await apiHono.request(
+		const download = await signerEmailRequest(
+			apiHono,
 			`/api/final-documents/${signerTokenValue}/pdf`,
 			{ headers: { "x-now": "2026-05-23T08:05:00.000Z" } },
 			{ DOCUMENTS_BUCKET: bucket },
@@ -224,7 +238,7 @@ describe("self-sign completion detail links", () => {
 			expiresAt: new Date("2026-05-23T08:00:00.000Z"),
 		};
 
-		const response = await apiHono.request(`/api/signing/${signerTokenValue}`, {
+		const response = await signerEmailRequest(apiHono, `/api/signing/${signerTokenValue}`, {
 			headers: { "x-now": "2026-05-23T08:05:00.000Z" },
 		});
 
@@ -316,6 +330,9 @@ function resetState() {
 	state.finalDocuments = [];
 	state.emailSendRecords = [];
 	state.r2Objects.clear();
+	const sourcePdf = pdfFixtureBytes("Self-sign agreement");
+	state.sourceDocuments[0] = { ...state.sourceDocuments[0], byteSize: sourcePdf.byteLength };
+	state.r2Objects.set(`envelopes/${envelopeId}/source.pdf`, sourcePdf);
 }
 
 function seedCompletedFinalDocument() {

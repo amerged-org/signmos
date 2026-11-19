@@ -13,7 +13,9 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { FINAL_PDF_RENDERER_PRODUCER } from "@/db/envelope/final-pdf-renderer";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import { apiHono } from "@/hono/api";
+import { signerEmailRequest, signerEmailSessionFixtures } from "@/test/signer-email-fixture";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -119,6 +121,8 @@ const state = vi.hoisted(() => ({
 }));
 
 function selectRows(table: unknown) {
+	if (table === signerEmailSessions)
+		return signerEmailSessionFixtures(state.tokens, state.recipients);
 	if (table === state.tokensTable) return state.tokens;
 	if (table === state.envelopesTable) return state.envelopes;
 	if (table === state.recipientsTable) return state.recipients;
@@ -156,35 +160,45 @@ function insertFinalDocuments(rows: Array<Record<string, unknown>>) {
 	return inserted;
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: { status?: string }) => ({
-				where: async () => {
-					if (table === state.recipientsTable) {
-						state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
-					}
-					if (table === state.envelopesTable) {
-						state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
-					}
-					return [];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: { status?: string }) => ({
+							where: async () => {
+								if (table === state.recipientsTable) {
+									state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
+								}
+								if (table === state.envelopesTable) {
+									state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
+								}
+								if (table === state.finalDocumentsTable) {
+									state.finalDocuments[0] = { ...state.finalDocuments[0], ...value };
+								}
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("PDF finalization", () => {
 	beforeEach(async () => {
@@ -239,7 +253,8 @@ describe("PDF finalization", () => {
 			},
 		};
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/complete",
 			{
 				method: "POST",
@@ -275,7 +290,7 @@ describe("PDF finalization", () => {
 	it("generates a final PDF with flattened values and audit summary when all recipients complete", async () => {
 		// #19 assumptions before RED:
 		// - Completion notifications are persisted as send records, not real Resend calls.
-		// - Sender completion fallback uses the verified sender process token.
+		// - Creator completion uses the authenticated document-history route.
 		// - Partner completion fallback uses the verified signing process token.
 		// - The certificate checksum is a deterministic hash over signing inputs, not a self-hash.
 		const bucket = {
@@ -291,7 +306,8 @@ describe("PDF finalization", () => {
 			},
 		};
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/complete",
 			{
 				method: "POST",
@@ -344,7 +360,7 @@ describe("PDF finalization", () => {
 			expect.objectContaining({
 				email: "sender@example.com",
 				kind: "completion",
-				fallbackUrl: "/completed-documents/90000000-0000-4000-8000-000000000001",
+				fallbackUrl: "/my-documents/00000000-0000-4000-8000-000000000001",
 			}),
 		]);
 		for (const record of [...state.emailSendRecords, ...state.senderVerificationEmailRecords]) {
@@ -395,9 +411,16 @@ describe("PDF finalization", () => {
 			},
 		});
 
-		const finalTokenDownload = await apiHono.request(
+		const anonymousDownload = await apiHono.request(
 			"/api/final-documents/90000000-0000-4000-8000-000000000001/pdf",
-			undefined,
+			{ headers: { "x-now": "2026-05-20T08:00:00.000Z" } },
+			{ DOCUMENTS_BUCKET: bucket },
+		);
+		expect(anonymousDownload.status).toBe(404);
+		const finalTokenDownload = await signerEmailRequest(
+			apiHono,
+			"/api/final-documents/valid-token/pdf",
+			{ headers: { "x-now": "2026-05-20T08:00:00.000Z" } },
 			{ DOCUMENTS_BUCKET: bucket },
 		);
 		expect(finalTokenDownload.status).toBe(200);
@@ -406,9 +429,15 @@ describe("PDF finalization", () => {
 			updateMetadata: false,
 		});
 		expect(tokenPdf.getProducer()).toBe(FINAL_PDF_RENDERER_PRODUCER);
-		const storedPdf = await PDFDocument.load(state.r2Objects.get(r2Key) ?? new Uint8Array(), {
-			updateMetadata: false,
-		});
+		const regeneratedKey = String(state.finalDocuments[0]?.r2Key);
+		expect(regeneratedKey).not.toBe(r2Key);
+		expect(state.r2Objects.get(r2Key)).toEqual(finalPdf);
+		const storedPdf = await PDFDocument.load(
+			state.r2Objects.get(regeneratedKey) ?? new Uint8Array(),
+			{
+				updateMetadata: false,
+			},
+		);
 		expect(storedPdf.getProducer()).toBe(FINAL_PDF_RENDERER_PRODUCER);
 
 		const senderDownload = await apiHono.request(
@@ -420,7 +449,8 @@ describe("PDF finalization", () => {
 		expect(senderDownload.headers.get("content-type")).toBe("application/pdf");
 		expect(PDFDocument.load(await senderDownload.arrayBuffer())).resolves.toBeTruthy();
 
-		const signerDownload = await apiHono.request(
+		const signerDownload = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/final-pdf",
 			{ headers: { "x-now": "2026-05-20T08:00:00.000Z" } },
 			{ DOCUMENTS_BUCKET: bucket },

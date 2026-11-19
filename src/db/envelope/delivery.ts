@@ -212,6 +212,16 @@ async function completeSenderRecipients(input: {
 	issuedAt: Date;
 }): Promise<void> {
 	if (input.senderRecipients.length === 0) return;
+	const senderIds = new Set(input.senderRecipients.map((recipient) => recipient.id));
+	if (
+		input.fields.some(
+			(field) =>
+				senderIds.has(field.recipientId) &&
+				(field.isPlaceholder || (field.type !== "signature" && field.type !== "date")),
+		)
+	) {
+		throw new Error("Sender custom fields require explicit completion");
+	}
 	const db = getDb();
 	const signatureValue = await getSenderSignatureValue(input.sentBy);
 	const completedAt = input.issuedAt.toISOString().slice(0, 10);

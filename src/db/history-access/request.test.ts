@@ -20,4 +20,12 @@ describe("history access request", () => {
 			expect(content).not.toContain(forbiddenMetadata);
 		}
 	});
+
+	it("escapes link characters in HTML while preserving the one-time link in text", () => {
+		const accessUrl = 'https://signmos.example/history-access#credential=abc&next="unsafe"';
+		const email = buildHistoryAccessEmail({ email: "owner@example.com", accessUrl });
+		expect(email.text).toContain(accessUrl);
+		expect(email.html).toContain("credential=abc&amp;next=&quot;unsafe&quot;");
+		expect(email.html).not.toContain('next="unsafe"');
+	});
 });

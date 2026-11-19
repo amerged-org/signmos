@@ -154,7 +154,9 @@ async function resolveCreatorReviewContext(
 async function resolvePartnerReviewContext(
 	input: QueueSigningCompletionReviewInput,
 ): Promise<SigningReviewContext | Response> {
-	const authorization = await authorizeAgentPartnerSigning(input.principal, input.documentId);
+	const authorization = await authorizeAgentPartnerSigning(input.principal, input.documentId, {
+		allowCompletionRetry: true,
+	});
 	if (authorization.state !== "active") {
 		const error = agentPartnerAuthorizationError(authorization, input.documentId);
 		return Response.json(error.body, { status: error.status });

@@ -1,3 +1,4 @@
+import { PDFDocument } from "pdf-lib";
 import {
 	auditEvents,
 	emailSendRecords,
@@ -5,11 +6,15 @@ import {
 	envelopeRecipients,
 	envelopes,
 	fieldValues,
+	finalDocuments,
 	signatureProfiles,
 	signerTokens,
 	sourceDocuments,
 } from "@/db/envelope";
+import { signerEmailSessions } from "@/db/signer-email/table";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes } from "@/test/pdf-fixtures";
+import { signerEmailRequest, signerEmailSessionFixtures } from "@/test/signer-email-fixture";
 
 const state = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -18,6 +23,7 @@ const state = vi.hoisted(() => ({
 	tokensTable: null as unknown,
 	sourceDocumentsTable: null as unknown,
 	fieldValuesTable: null as unknown,
+	finalDocumentsTable: null as unknown,
 	auditEventsTable: null as unknown,
 	emailSendRecordsTable: null as unknown,
 	signatureProfilesTable: null as unknown,
@@ -102,24 +108,37 @@ const state = vi.hoisted(() => ({
 		},
 	],
 	fieldValues: [] as unknown[],
+	finalDocuments: [] as Array<Record<string, unknown>>,
 	auditEvents: [] as unknown[],
 	emailSends: [] as Array<Record<string, unknown>>,
 	signatureProfiles: [] as Array<Record<string, unknown>>,
 }));
 
 function selectRows(table: unknown) {
+	if (table === signerEmailSessions)
+		return signerEmailSessionFixtures(state.tokens, state.recipients);
 	if (table === state.tokensTable) return state.tokens;
 	if (table === state.envelopesTable) return state.envelopes;
 	if (table === state.recipientsTable) return state.recipients;
 	if (table === state.fieldsTable) return state.fields;
 	if (table === state.sourceDocumentsTable) return state.sourceDocuments;
 	if (table === state.fieldValuesTable) return state.fieldValues;
+	if (table === state.finalDocumentsTable) return state.finalDocuments;
 	if (table === state.emailSendRecordsTable) return state.emailSends;
 	if (table === state.signatureProfilesTable) return state.signatureProfiles;
 	return [];
 }
 
 function insertRows(table: unknown, rows: unknown[]) {
+	if (table === state.finalDocumentsTable) {
+		const inserted = (rows as Array<Record<string, unknown>>).map((row) => ({
+			id: "90000000-0000-4000-8000-000000000001",
+			createdAt: new Date("2026-05-20T08:00:00.000Z"),
+			...row,
+		}));
+		state.finalDocuments.push(...inserted);
+		return inserted;
+	}
 	if (table === state.fieldValuesTable) {
 		state.fieldValues.push(...rows);
 		return rows;
@@ -146,9 +165,14 @@ function insertRows(table: unknown, rows: unknown[]) {
 
 type UpdateValue = { status?: string; page?: number; x?: number; y?: number };
 
-function updateRows(table: unknown, value: UpdateValue) {
+function updateRows(table: unknown, value: UpdateValue, condition: unknown) {
 	if (table === state.recipientsTable) {
-		state.recipients[0] = { ...state.recipients[0], status: value.status ?? "sent" };
+		const recipientId = conditionValues(condition).find((value) =>
+			state.recipients.some((recipient) => recipient.id === value),
+		);
+		state.recipients = state.recipients.map((recipient) =>
+			recipient.id === recipientId ? { ...recipient, status: value.status ?? "sent" } : recipient,
+		);
 	}
 	if (table === state.envelopesTable) {
 		state.envelopes[0] = { ...state.envelopes[0], status: value.status ?? "sent" };
@@ -158,30 +182,44 @@ function updateRows(table: unknown, value: UpdateValue) {
 	}
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => selectRows(table),
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (rows: unknown[] | unknown) => ({
-				returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
-			}),
-		}),
-		update: (table: unknown) => ({
-			set: (value: UpdateValue) => ({
-				where: async () => {
-					updateRows(table, value);
-					return [];
+function conditionValues(condition: unknown): unknown[] {
+	if (!condition || typeof condition !== "object") return [];
+	if ("value" in condition) return [condition.value];
+	if (!("queryChunks" in condition) || !Array.isArray(condition.queryChunks)) return [];
+	return condition.queryChunks.flatMap(conditionValues);
+}
+
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => ({
+							where: () => ({
+								limit: async () => selectRows(table),
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (rows: unknown[] | unknown) => ({
+							returning: async () => insertRows(table, Array.isArray(rows) ? rows : [rows]),
+						}),
+					}),
+					update: (table: unknown) => ({
+						set: (value: UpdateValue) => ({
+							where: async (condition: unknown) => {
+								updateRows(table, value, condition);
+								return [];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				(table) => selectRows(table) as Array<Record<string, unknown>>,
+			),
+	};
+});
 
 describe("signing flow API", () => {
 	beforeEach(() => {
@@ -191,6 +229,7 @@ describe("signing flow API", () => {
 		state.tokensTable = signerTokens;
 		state.sourceDocumentsTable = sourceDocuments;
 		state.fieldValuesTable = fieldValues;
+		state.finalDocumentsTable = finalDocuments;
 		state.auditEventsTable = auditEvents;
 		state.emailSendRecordsTable = emailSendRecords;
 		state.signatureProfilesTable = signatureProfiles;
@@ -260,6 +299,7 @@ describe("signing flow API", () => {
 			},
 		];
 		state.fieldValues.length = 0;
+		state.finalDocuments.length = 0;
 		state.auditEvents.length = 0;
 		state.emailSends.length = 0;
 		state.signatureProfiles.length = 0;
@@ -286,7 +326,7 @@ describe("signing flow API", () => {
 			completedAt: new Date("2026-05-20T07:07:00.000Z"),
 		});
 
-		const response = await apiHono.request("/api/signing/valid-token", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token", {
 			headers: { "x-now": "2026-05-20T07:03:00.000Z" },
 		});
 
@@ -342,7 +382,8 @@ describe("signing flow API", () => {
 			signingMode: "only_me",
 		};
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/fields/50000000-0000-4000-8000-000000000001",
 			{
 				method: "PATCH",
@@ -395,7 +436,7 @@ describe("signing flow API", () => {
 			},
 		);
 
-		const response = await apiHono.request("/api/signing/valid-token", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token", {
 			headers: { "x-now": "2026-05-20T07:03:00.000Z" },
 		});
 
@@ -416,7 +457,8 @@ describe("signing flow API", () => {
 	});
 
 	it("downloads the current source PDF for a verified partner", async () => {
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/source-pdf",
 			{
 				headers: { "x-now": "2026-05-20T07:03:00.000Z" },
@@ -424,7 +466,7 @@ describe("signing flow API", () => {
 			{
 				DOCUMENTS_BUCKET: {
 					get: async (key: string) => ({
-						arrayBuffer: async () => new TextEncoder().encode(`%PDF-1.7 ${key}\n%%EOF`).buffer,
+						arrayBuffer: async () => pdfFixtureBytes(key).buffer,
 					}),
 				},
 			},
@@ -436,7 +478,7 @@ describe("signing flow API", () => {
 	});
 
 	it("completes typed signature and date fields while other recipients remain outstanding", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -502,7 +544,8 @@ describe("signing flow API", () => {
 			sentBy: "sender@example.com",
 		};
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/complete",
 			{
 				method: "POST",
@@ -551,13 +594,13 @@ describe("signing flow API", () => {
 		expect(requestBody).toEqual(
 			expect.objectContaining({
 				to: ["sender@example.com"],
-				subject: "Your document was signed",
+				subject: "Dein Vertrag wurde unterzeichnet · amerged Sign",
 			}),
 		);
 		expect(requestBody.html).toContain(
 			"https://signmos.example/envelope-fields?envelopeId=00000000-0000-4000-8000-000000000001",
 		);
-		expect(requestBody.text).toContain("Ada Lovelace signed");
+		expect(requestBody.text).toContain("Ada Lovelace hat deinen Vertrag unterzeichnet");
 
 		fetchMock.mockRestore();
 	});
@@ -574,7 +617,8 @@ describe("signing flow API", () => {
 			sentBy: "sender@example.com",
 		};
 
-		const response = await apiHono.request(
+		const response = await signerEmailRequest(
+			apiHono,
 			"/api/signing/valid-token/complete",
 			{
 				method: "POST",
@@ -607,7 +651,7 @@ describe("signing flow API", () => {
 	});
 
 	it("completes signing with a drawn signature payload", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -640,7 +684,7 @@ describe("signing flow API", () => {
 	});
 
 	it("ignores future date payloads and stores the controlled signing date", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -669,7 +713,7 @@ describe("signing flow API", () => {
 	});
 
 	it("remembers a typed partner signature only when explicit consent is selected", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -702,7 +746,7 @@ describe("signing flow API", () => {
 	});
 
 	it("remembers a drawn partner signature with the reusable SVG path", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -792,17 +836,36 @@ describe("signing flow API", () => {
 			},
 		];
 
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"x-now": "2026-05-20T08:00:00.000Z",
+		const sourcePdf = pdfFixtureBytes("Sender-first agreement");
+		state.sourceDocuments[0] = { ...state.sourceDocuments[0], byteSize: sourcePdf.byteLength };
+		const storedPdfs = new Map<string, Uint8Array>([[state.sourceDocuments[0].r2Key, sourcePdf]]);
+		const response = await signerEmailRequest(
+			apiHono,
+			"/api/signing/valid-token/complete",
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-now": "2026-05-20T08:00:00.000Z",
+				},
+				body: JSON.stringify({
+					signatureName: "Grace Hopper",
+					date: "2026-05-20",
+				}),
 			},
-			body: JSON.stringify({
-				signatureName: "Grace Hopper",
-				date: "2026-05-20",
-			}),
-		});
+			{
+				DOCUMENTS_BUCKET: {
+					get: async (key: string) => {
+						const bytes = storedPdfs.get(key);
+						return bytes ? { arrayBuffer: async () => Uint8Array.from(bytes).buffer } : null;
+					},
+					put: async (key: string, bytes: Uint8Array) => {
+						storedPdfs.set(key, bytes);
+						return null;
+					},
+				},
+			},
+		);
 
 		expect(response.status).toBe(200);
 		await expect(response.json()).resolves.toEqual({
@@ -813,22 +876,35 @@ describe("signing flow API", () => {
 				envelopeStatus: "completed",
 			},
 		});
-		expect(state.emailSends).toEqual([
-			expect.objectContaining({
-				envelopeId: "00000000-0000-4000-8000-000000000001",
-				recipientId: "20000000-0000-4000-8000-000000000002",
-				tokenId: "30000000-0000-4000-8000-000000000002",
-				email: "sender@example.com",
-				kind: "partner_signed",
-				fallbackUrl: "/envelope-fields?envelopeId=00000000-0000-4000-8000-000000000001",
-			}),
-		]);
+		expect(state.emailSends).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					envelopeId: "00000000-0000-4000-8000-000000000001",
+					recipientId: "20000000-0000-4000-8000-000000000002",
+					tokenId: "30000000-0000-4000-8000-000000000002",
+					email: "sender@example.com",
+					kind: "partner_signed",
+					fallbackUrl: "/envelope-fields?envelopeId=00000000-0000-4000-8000-000000000001",
+				}),
+				expect.objectContaining({
+					recipientId: "20000000-0000-4000-8000-000000000002",
+					email: "grace@example.com",
+					kind: "completion",
+				}),
+			]),
+		);
+		expect(state.finalDocuments).toHaveLength(1);
+		const finalKey = state.finalDocuments[0]?.r2Key;
+		expect(typeof finalKey).toBe("string");
+		const finalPdf = storedPdfs.get(String(finalKey));
+		expect(finalPdf).toBeDefined();
+		expect((await PDFDocument.load(finalPdf as Uint8Array)).getPageCount()).toBe(2);
 	});
 
 	it("rejects completion when the signer has no assigned fields", async () => {
 		state.fields = [];
 
-		const response = await apiHono.request("/api/signing/valid-token/complete", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/complete", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -854,7 +930,7 @@ describe("signing flow API", () => {
 	});
 
 	it("declines with a reason and optional comment while appending audit events", async () => {
-		const response = await apiHono.request("/api/signing/valid-token/decline", {
+		const response = await signerEmailRequest(apiHono, "/api/signing/valid-token/decline", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",

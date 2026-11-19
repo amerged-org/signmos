@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_DOCUMENT_FIELDS, MAX_SOURCE_PDF_PAGES } from "./pdf-policy-limits";
 import {
 	envelopeStatuses,
 	fieldTypes,
@@ -11,6 +12,8 @@ import {
 export const envelopeLifecycleActions = ["send", "cancel", "expire", "delete"] as const;
 export const envelopeAllowedActionsByStatus = {
 	awaiting_verification: ["verify_sender_email"],
+	preparing: ["delete"],
+	queued: ["cancel", "delete"],
 	draft: ["upload_source_pdf", "add_recipients", "add_fields", "send"],
 	changes_requested: ["upload_revised_source_pdf", "cancel", "expire", "delete"],
 	sent: ["view_signing_status", "resend_invitation", "cancel", "expire", "delete"],
@@ -281,6 +284,10 @@ export type SignerToken = z.infer<typeof SignerTokenSchema>;
 export const SignerSessionFieldSchema = z.object({
 	id: z.string().uuid(),
 	type: FieldTypeSchema,
+	name: z.string().nullable().default(null),
+	label: z.string().nullable().default(null),
+	required: z.boolean().default(true),
+	isPlaceholder: z.boolean().default(false),
 	page: z.number(),
 	x: z.number(),
 	y: z.number(),
@@ -325,21 +332,16 @@ export const CompleteSigningSignatureSchema = z.discriminatedUnion("kind", [
 	}),
 ]);
 export type CompleteSigningSignature = z.infer<typeof CompleteSigningSignatureSchema>;
-
-export const CompleteSigningRequestSchema = z
-	.object({
-		signatureName: z.string().trim().min(1).optional(),
-		signature: CompleteSigningSignatureSchema.optional(),
-		rememberSignature: z.boolean().default(false),
-		date: z
-			.string()
-			.regex(/^\d{4}-\d{2}-\d{2}$/)
-			.optional(),
-	})
-	.refine((input) => input.signature || input.signatureName, {
-		message: "Signature is required",
-		path: ["signature"],
-	});
+export const CompleteSigningRequestSchema = z.object({
+	signatureName: z.string().trim().min(1).optional(),
+	signature: CompleteSigningSignatureSchema.optional(),
+	rememberSignature: z.boolean().default(false),
+	fieldValues: z.record(z.string().uuid(), z.union([z.string().max(2000), z.boolean()])).optional(),
+	date: z
+		.string()
+		.regex(/^\d{4}-\d{2}-\d{2}$/)
+		.optional(),
+});
 export type CompleteSigningRequest = z.infer<typeof CompleteSigningRequestSchema>;
 
 export const CompleteSigningResultSchema = z.object({
@@ -383,6 +385,10 @@ export const EnvelopeFieldSchema = z.object({
 	envelopeId: z.string().uuid(),
 	recipientId: z.string().uuid(),
 	type: FieldTypeSchema,
+	name: z.string().nullable().default(null),
+	label: z.string().nullable().default(null),
+	required: z.boolean().catch(true),
+	isPlaceholder: z.boolean().catch(false),
 	page: z.coerce.number().int().min(1),
 	x: z.coerce.number().int().min(0),
 	y: z.coerce.number().int().min(0),
@@ -405,7 +411,11 @@ export type FieldValue = z.infer<typeof FieldValueSchema>;
 export const FieldCreateSchema = z.object({
 	recipientId: z.string().uuid(),
 	type: FieldTypeSchema,
-	page: z.number().int().min(1),
+	name: z.string().trim().min(1).max(120).nullable().optional(),
+	label: z.string().trim().min(1).max(200).nullable().optional(),
+	required: z.boolean().optional(),
+	isPlaceholder: z.boolean().optional(),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 	width: z.number().int().positive(),
@@ -414,18 +424,22 @@ export const FieldCreateSchema = z.object({
 export type FieldCreateInput = z.infer<typeof FieldCreateSchema>;
 
 export const AddFieldsRequestSchema = z.object({
-	fields: z.array(FieldCreateSchema).min(1),
+	fields: z.array(FieldCreateSchema).min(1).max(MAX_DOCUMENT_FIELDS),
 });
 export type AddFieldsRequest = z.infer<typeof AddFieldsRequestSchema>;
 
 export const DefaultFieldPlacementRequestSchema = z.object({
 	recipientIds: z.array(z.string().uuid()).min(1).max(10),
-	page: z.number().int().min(1).optional().default(1),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).optional().default(1),
 });
 export type DefaultFieldPlacementRequest = z.infer<typeof DefaultFieldPlacementRequestSchema>;
 
 export const EnvelopeFieldResponseSchema = EnvelopeFieldSchema.extend({
 	createdAt: z.string(),
+	name: z.string().nullable().optional(),
+	label: z.string().nullable().optional(),
+	required: z.boolean().optional(),
+	isPlaceholder: z.boolean().optional(),
 });
 export type EnvelopeFieldResponse = z.infer<typeof EnvelopeFieldResponseSchema>;
 
@@ -474,6 +488,14 @@ export function toEnvelopeFieldResponse(field: EnvelopeField): EnvelopeFieldResp
 		envelopeId: field.envelopeId,
 		recipientId: field.recipientId,
 		type: field.type,
+		...(field.name !== null || field.isPlaceholder || field.label !== null || !field.required
+			? {
+					name: field.name,
+					label: field.label,
+					required: field.required,
+					isPlaceholder: field.isPlaceholder,
+				}
+			: {}),
 		page: field.page,
 		x: field.x,
 		y: field.y,

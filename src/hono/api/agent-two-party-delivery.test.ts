@@ -9,6 +9,7 @@ import {
 	signerTokens,
 } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 import { approveAgentReview } from "./agent-human-review-test-helper";
 import {
 	agentSelfSignBucket,
@@ -56,7 +57,7 @@ async function uploadSource(documentId: string, key: string, bucket: R2Bucket): 
 		{
 			method: "PUT",
 			headers: headers(key, "application/pdf"),
-			body: "%PDF-1.7\ntwo party delivery\n%%EOF",
+			body: pdfFixtureText("two party delivery"),
 		},
 		{ DOCUMENTS_BUCKET: bucket },
 	);

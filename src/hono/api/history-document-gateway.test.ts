@@ -41,36 +41,43 @@ function selectQuery(table: unknown) {
 	});
 }
 
-vi.mock("@/db/setup", () => ({
-	getDb: () => ({
-		select: () => ({
-			from: (table: unknown) => selectQuery(table),
-		}),
-		update: (table: unknown) => ({
-			set: (values: Record<string, unknown>) => ({
-				where: () => ({
-					returning: async () => {
-						if (table !== state.tables.get("sessions")) return [];
-						const session = state.sessions.find((candidate) => candidate.status === "active");
-						if (!session) return [];
-						Object.assign(session, values);
-						return [session];
-					},
-				}),
-			}),
-		}),
-		insert: (table: unknown) => ({
-			values: (row: Record<string, unknown>) => ({
-				returning: async () => {
-					if (table !== state.tables.get("securityEvents")) return [];
-					const inserted = { id: crypto.randomUUID(), ...row };
-					state.securityEvents.push(inserted);
-					return [inserted];
+vi.mock("@/db/setup", async () => {
+	const { wrapSigningTestDb } = await import("@/db/envelope/signing-test-db");
+	return {
+		getDb: () =>
+			wrapSigningTestDb(
+				{
+					select: () => ({
+						from: (table: unknown) => selectQuery(table),
+					}),
+					update: (table: unknown) => ({
+						set: (values: Record<string, unknown>) => ({
+							where: () => ({
+								returning: async () => {
+									if (table !== state.tables.get("sessions")) return [];
+									const session = state.sessions.find((candidate) => candidate.status === "active");
+									if (!session) return [];
+									Object.assign(session, values);
+									return [session];
+								},
+							}),
+						}),
+					}),
+					insert: (table: unknown) => ({
+						values: (row: Record<string, unknown>) => ({
+							returning: async () => {
+								if (table !== state.tables.get("securityEvents")) return [];
+								const inserted = { id: crypto.randomUUID(), ...row };
+								state.securityEvents.push(inserted);
+								return [inserted];
+							},
+						}),
+					}),
 				},
-			}),
-		}),
-	}),
-}));
+				selectRows,
+			),
+	};
+});
 
 describe("history completed-document gateway", () => {
 	beforeEach(async () => {
@@ -134,11 +141,11 @@ describe("history completed-document gateway", () => {
 		state.r2Objects = new Map([[finalR2Key, finalPdf]]);
 	});
 
-	it("returns detail and PDF via the session without changing the bearer-link contract", async () => {
+	it("returns detail and PDF via the session while rejecting anonymous final-document IDs", async () => {
 		// Issue #37 assumptions before RED:
 		// - History detail mirrors completed-document data but replaces bearer download URLs.
 		// - The envelope id is a non-secret locator authorized by the HTTP-only session.
-		// - Existing final-document bearer routes remain independently valid.
+		// - Final-document IDs are locators and do not authorize anonymous access.
 		const headers = {
 			cookie: `signmos_history_session=${rawSession}`,
 			"x-now": "2026-07-17T16:29:58.000Z",
@@ -177,11 +184,7 @@ describe("history completed-document gateway", () => {
 			`/api/final-documents/${finalDocumentToken}`,
 			{ headers: { "x-now": "2026-07-17T16:29:58.000Z" } },
 		);
-		expect(existingBearerResponse.status).toBe(200);
-		const existingBearerBody = await existingBearerResponse.json();
-		expect(existingBearerBody).toEqual({
-			data: expect.objectContaining({ token: finalDocumentToken, envelopeId }),
-		});
+		expect(existingBearerResponse.status).toBe(404);
 	});
 
 	it("keeps the session expiry fixed and rejects it at and after eight hours", async () => {

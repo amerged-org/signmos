@@ -44,14 +44,18 @@ describe("OpenAI Build Week GPT-5.6 evidence contract", () => {
 		}
 	});
 
-	it("publishes the meaningful-use and non-runtime boundary in the README", () => {
+	it("preserves upstream attribution and separates its submission evidence from this fork", () => {
 		const readme = read("README.md");
 
-		expect(readme).toContain("./plans/evidence/openai-build-week-gpt56.md");
-		expect(readme).toContain("GPT-5.6 was used through Codex as a build-time engineering model");
-		expect(readme).toContain("It is not a Signmos runtime dependency");
-		expect(readme).toContain("46 product/security decisions");
-		expect(readme).toContain("issues #43–#51");
+		expect(readme).toContain("[Signmos](https://github.com/auditmos/signmos)");
+		expect(readme).toContain(
+			"Original upstream submission evidence remains available in Git history",
+		);
+		expect(readme).toContain("it is not release evidence for this fork");
+		expect(readme).toContain("Original Signmos copyright and third-party notices are preserved");
+		expect(read(evidencePath)).toContain(
+			"GPT-5.6 was used through Codex as a build-time engineering model",
+		);
 	});
 
 	it("provides consistent Devpost copy and timestamped demo narration", () => {

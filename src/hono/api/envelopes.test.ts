@@ -4,7 +4,9 @@ import {
 	idempotencyRecords as idempotencyRecordsTable,
 	sourceDocuments as sourceDocumentsTable,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_BYTES } from "@/db/envelope/pdf-policy";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureBytes } from "@/test/pdf-fixtures";
 
 const dbState = vi.hoisted(() => ({
 	envelopesTable: null as unknown,
@@ -226,7 +228,7 @@ describe("envelopes API", () => {
 		});
 	});
 
-	it("uploads a valid source PDF under 10 MB to R2 and persists document metadata", async () => {
+	it("uploads a valid source PDF at most 2 MiB to R2 and persists document metadata", async () => {
 		// Assumptions for issue #7 RED:
 		// - Source PDF upload uses POST /api/envelopes/:id/source-pdf with application/pdf bytes.
 		// - R2 storage is accessed through the DOCUMENTS_BUCKET binding.
@@ -238,7 +240,7 @@ describe("envelopes API", () => {
 			createdAt: new Date("2026-05-20T07:00:00.000Z"),
 		});
 
-		const pdfBytes = new TextEncoder().encode("%PDF-1.7\n%");
+		const pdfBytes = pdfFixtureBytes();
 		const response = await apiHono.request(
 			"/api/envelopes/00000000-0000-4000-8000-000000000001/source-pdf",
 			{
@@ -310,7 +312,7 @@ describe("envelopes API", () => {
 			},
 		});
 
-		const tooLargeBytes = new Uint8Array(10 * 1024 * 1024 + 1);
+		const tooLargeBytes = new Uint8Array(MAX_SOURCE_PDF_BYTES + 1);
 		tooLargeBytes.set(new TextEncoder().encode("%PDF-"), 0);
 		const tooLarge = await apiHono.request(
 			"/api/envelopes/00000000-0000-4000-8000-000000000001/source-pdf",
@@ -329,8 +331,8 @@ describe("envelopes API", () => {
 		await expect(tooLarge.json()).resolves.toEqual({
 			error: {
 				code: "SOURCE_PDF_TOO_LARGE",
-				message: "Source PDF must be under 10 MB",
-				limitBytes: 10 * 1024 * 1024,
+				message: "Source PDF must be at most 2 MiB",
+				limitBytes: MAX_SOURCE_PDF_BYTES,
 			},
 		});
 		expect(dbState.sourceDocuments).toHaveLength(0);
@@ -357,7 +359,7 @@ describe("envelopes API", () => {
 				"idempotency-key": "upload-pdf-1",
 				"content-type": "application/pdf",
 			},
-			body: new TextEncoder().encode("%PDF-1.7\n%"),
+			body: pdfFixtureBytes(),
 		};
 
 		const first = await apiHono.request(

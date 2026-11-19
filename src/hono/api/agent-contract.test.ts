@@ -30,6 +30,7 @@ import {
 	AgentTwoPartySendResponseSchema,
 	AgentV1MeResponseSchema,
 } from "@/db/agentic-access/schema";
+import { MAX_SOURCE_PDF_BYTES, MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import { publicAgentContractHono } from "@/hono/public-agent-contract";
 
 describe("agentic onboarding public contract", () => {
@@ -289,6 +290,8 @@ describe("agentic onboarding public contract", () => {
 		expect(upload.requestBody?.content?.["application/pdf"]?.schema).toEqual({
 			type: "string",
 			format: "binary",
+			maxLength: MAX_SOURCE_PDF_BYTES,
+			description: `At most ${MAX_SOURCE_PDF_BYTES} bytes and ${MAX_SOURCE_PDF_PAGES} PDF pages`,
 		});
 		expect(upload.responses?.["201"]?.content?.["application/json"]?.schema).toEqual(
 			z.toJSONSchema(AgentSourcePdfResponseSchema),

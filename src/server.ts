@@ -1,29 +1,11 @@
 // DO NOT DELETE THIS FILE!!!
-// Custom CF Workers entry: routes JSON/public Agent contracts to Hono, rest to TanStack Start
+// Local Worker entry; hosted routing is in the TanStack request middleware.
 import handler from "@tanstack/react-start/server-entry";
-import { initDatabase } from "@/db";
-import { apiHono } from "@/hono/api";
-import { publicAgentContractHono } from "@/hono/public-agent-contract";
 
 export default {
-	fetch(request: Request, env: Env, ctx: ExecutionContext) {
-		initDatabase({
-			host: env.DATABASE_HOST,
-			username: env.DATABASE_USERNAME,
-			password: env.DATABASE_PASSWORD,
-		});
-
-		const url = new URL(request.url);
-
-		if (url.pathname.startsWith("/api/")) {
-			return apiHono.fetch(request, env, ctx);
-		}
-		if (url.pathname === "/agent.md" || url.pathname === "/openapi.json") {
-			return publicAgentContractHono.fetch(request, env, ctx);
-		}
-
-		return handler.fetch(request, {
-			context: { fromFetch: true, turnstileSiteKey: env.TURNSTILE_SITE_KEY },
+	fetch(incoming: Request, bindings: Env) {
+		return handler.fetch(incoming, {
+			context: { fromFetch: true, turnstileSiteKey: bindings.TURNSTILE_SITE_KEY },
 		});
 	},
 };

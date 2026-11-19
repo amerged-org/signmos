@@ -7,6 +7,7 @@ import {
 	sourceDocuments,
 } from "@/db/envelope";
 import { apiHono } from "@/hono/api";
+import { pdfFixtureText } from "@/test/pdf-fixtures";
 import {
 	agentSelfSignBucket,
 	selfSignRows as rows,
@@ -53,7 +54,7 @@ async function queueSelfSignReview() {
 				...agentHeaders("human-review-upload", "application/pdf"),
 				"x-source-filename": "review-me.pdf",
 			},
-			body: "%PDF-1.7\nhuman review fixture\n%%EOF",
+			body: pdfFixtureText("human review fixture"),
 		},
 		{ DOCUMENTS_BUCKET: bucket },
 	);

@@ -17,9 +17,11 @@ import {
 	SigningCompletionBlockedError,
 	SigningFieldPlacementBlockedError,
 	SigningFieldPlacementNotFoundError,
+	SigningFieldValuesError,
 	SigningNoAssignedFieldsError,
 	updateSignerFieldPlacement,
 } from "@/db/envelope";
+import { MAX_SOURCE_PDF_PAGES } from "@/db/envelope/pdf-policy-limits";
 import {
 	authorizeHistorySigner,
 	getHistoryCompletedDocumentView,
@@ -33,7 +35,7 @@ import { historyError } from "./history-errors";
 
 const historySigningEndpoint = createHono();
 const HistorySigningFieldPlacementSchema = z.object({
-	page: z.number().int().min(1).optional(),
+	page: z.number().int().min(1).max(MAX_SOURCE_PDF_PAGES).optional(),
 	x: z.number().int().min(0),
 	y: z.number().int().min(0),
 });
@@ -167,6 +169,9 @@ historySigningEndpoint.post("/documents/:envelopeId/signing/complete", async (c)
 		});
 		return c.json({ data: result });
 	} catch (error) {
+		if (error instanceof SigningFieldValuesError) {
+			return c.json({ error: { code: "INVALID_SIGNING_COMPLETION", message: error.message } }, 400);
+		}
 		if (error instanceof EmailDeliveryError) return historyEmailDeliveryError(c, error);
 		if (error instanceof SigningCompletionBlockedError) {
 			return c.json(

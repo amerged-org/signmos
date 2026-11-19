@@ -186,11 +186,16 @@ describe("production deployment", () => {
 		}
 	});
 
-	it("links the guarded production command and runbook from the public README", () => {
+	it("documents this fork's OMH deployment configuration and readiness check", () => {
 		const readme = readFileSync(resolve(repositoryRoot, "README.md"), "utf8");
+		const manifest = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8")) as {
+			scripts: Record<string, string>;
+		};
 
-		expect(readme).toContain("[production deployment runbook](./docs/PRODUCTION_DEPLOYMENT.md)");
-		expect(readme).toContain("`./scripts/deploy-production.sh --dry-run`");
-		expect(readme).toContain("`./scripts/deploy-production.sh --deploy`");
+		expect(readme).toContain("[ohmyhost.yaml](ohmyhost.yaml)");
+		expect(readme).toContain("pnpm omh:check");
+		expect(readme).toContain("database/omh-migrations");
+		expect(manifest.scripts.deploy).toBe("ohmyhost deploy");
+		expect(manifest.scripts["omh:check"]).toContain("ohmyhost init --dry-run");
 	});
 });

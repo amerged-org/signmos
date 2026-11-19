@@ -7,6 +7,7 @@ import { apiHono } from "@/hono/api";
 import {
 	agentSelfSignBucket,
 	agentSelfSignTables,
+	contractPdfFixture,
 	selfSignRows as rows,
 	agentSelfSignTestState as state,
 } from "./agent-self-sign-test-db";
@@ -89,7 +90,7 @@ export async function createSentTwoPartyFixture(input: {
 		{
 			method: "PUT",
 			headers: agentHeaders(creatorToken, `${input.keyPrefix}-upload`, "application/pdf"),
-			body: "%PDF-1.7\npartner signing fixture\n%%EOF",
+			body: await contractPdfFixture(),
 		},
 		{ DOCUMENTS_BUCKET: bucket },
 	);
