@@ -1,3 +1,25 @@
+# [1.12.0](https://github.com/amerged-org/signmos/compare/v1.11.0...v1.12.0) (2026-11-19)
+
+
+### Bug Fixes
+
+* align mobile language switcher with brand ([7c62361](https://github.com/amerged-org/signmos/commit/7c6236175b66c0f33f858f6ae7ebf2592b0afc08))
+* expose deferred private deletion retry deadlines ([7259e42](https://github.com/amerged-org/signmos/commit/7259e423c4f6d901e29f4dacc79c85302382b71d))
+* **omh:** bound contract and signing runtime calls ([42843e0](https://github.com/amerged-org/signmos/commit/42843e0d56059aaab94c7817cbd7c55735380429))
+* omit unsupported worker source maps ([01115e5](https://github.com/amerged-org/signmos/commit/01115e5f8ce0ce5d3fdf048687f11ce4ea10b07e))
+* read private PDFs through storage gateway ([b0b12e8](https://github.com/amerged-org/signmos/commit/b0b12e8a7a4358c92f6523530ff574f4ebb04ca2))
+* run hosted signing through TanStack middleware ([3c1f11f](https://github.com/amerged-org/signmos/commit/3c1f11f21e0fb2e5a0d3cc3a5fce60207cc67c15))
+* serve email branding from sign domain ([75a267f](https://github.com/amerged-org/signmos/commit/75a267f77c57884cd9d4fe1d387e6eecf28e485a))
+
+
+### Features
+
+* add contract CRUD and email-verified signing ([6c51433](https://github.com/amerged-org/signmos/commit/6c51433ee2a67548d14aa2d023198e55cb928b37))
+* apply amerged identity to signing experience ([fecc9a3](https://github.com/amerged-org/signmos/commit/fecc9a33da3b406143abacaaf1629b8d0ad24195))
+* render HTML contracts to PDF before signing ([f2a059c](https://github.com/amerged-org/signmos/commit/f2a059c97b8e40c239a2317936bd6565aa9ca0be))
+* simplify signing UI and add language switcher ([8c564da](https://github.com/amerged-org/signmos/commit/8c564dabd74586eb97350695277369d7f1680fad))
+* support flexible multi-recipient PDF signing ([e70cba6](https://github.com/amerged-org/signmos/commit/e70cba62f132b8178adff8d812080678604cf073))
+
 # [1.11.0](https://github.com/auditmos/signmos/compare/v1.10.0...v1.11.0) (2026-08-04)
 
 
